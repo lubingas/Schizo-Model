@@ -1,37 +1,9 @@
-# switch off file writing if in use
-if(sink.number()>0) sink()
+# R/functions.R
+# ---------------------------
+# Core functions for the Schizophrenia cost-effectiveness model
+# ---------------------------
 
-rm(list=ls())
-
-# define function for detaching variables
-detachAllData <- function()  {
-  pos.to.detach <- (1:length(search()))[substring(search(), 
-                                                  first = 1, last = 8) != "package:" & search() != ".GlobalEnv" & 
-                                          search() != "Autoloads" & search() != "CheckExEnv" & search() != "tools:rstudio" & search() != "TempEnv"]
-  for (i in 1:length(pos.to.detach)) {
-    if (length(pos.to.detach) > 0) {
-      detach(pos = pos.to.detach[1])
-      pos.to.detach <- (1:length(search()))[substring(search(), 
-                                                      first = 1, last = 8) != "package:" & search() != 
-                                              ".GlobalEnv" & search() != "Autoloads" & search() != 
-                                              "CheckExEnv" & search() != "tools:rstudio" & 
-                                              search() != "TempEnv"]
-    }
-  }
-}
-
-# run detach function
-detachAllData()
-
-
-
-library(tidyverse)
-library(readxl)
-library(plotly)
-library(RColorBrewer)
-
-
-## some subroutines for calculating various stuff
+## functions for calculating various stuff
 # 1) extrapyramidal side effects
 eps.risk <- function(base.p, drug.OR){
   return(drug.OR * base.p/(1 - base.p + (drug.OR * base.p)))
@@ -41,7 +13,6 @@ eps.risk <- function(base.p, drug.OR){
 diab.risk <- function(base.p, drug.RR) {
   return(base.p * drug.RR)
 }
-
 
 # 3) costs models
 # a) drug costs
@@ -53,6 +24,22 @@ op.drug.costs <- function(cost, qty) {
   return(cost * qty * 365)
 }
 
+## extract parameters from data
+getparms <- function(data, value) {
+  data %>% 
+    filter(!is.na({{value}})) %>%   # remove NA from data
+    select(variable, {{value}}) %>%
+    deframe() # return named vector
+}
+
+# Option A (cleanest): infer drug from variable suffix
+getTPset <- function(data, value) {
+  data %>%
+    filter(!is.na({{value}})) %>%
+    select(variable, {{value}}) %>%
+    deframe() %>%
+    split(stringr::str_extract(names(.), "(CPZ|HAL|OLA|RIS|QUE)$"))
+}
 
 ## function to return markov traces for each intervention
 ## INSTRUCTIONS
@@ -162,16 +149,25 @@ mtrace <- function(primary = numeric(),
 
 
 RunModel <- function(interventions,
-                     baseparms, 
+                     baseparms,
                      basetransitions,
-                     DALYs = TRUE) {# inputs vector houses all our parameter inputs
+                     DALYs = TRUE,
+                     summary_only = FALSE) {
   
-  environment(mtrace) <- environment() # makes temp copy of mtrace function so variables created here are accessible to it without needing to plance entire mtrace function in the RunModel function
-
+  # need variable names from each element of these named vectors (improve this later)
   parms <- c(baseparms, basetransitions)
-  beta1 <- as.list(parms)
-  attach(beta1)
+  list2env(as.list(parms), envir = environment())  # creates named parameters in *this* environment
+  #beta1 <- as.list(parms)
+  #attach(beta1)
   
+  
+  # ---------------------------------------------------------------------------------
+  # makes temp copy of mtrace function so variables created here are accessible to it
+  # without needing to place entire mtrace function in the RunModel function
+  # ---------------------------------------------------------------------------------
+  
+  environment(mtrace) <- environment() 
+
   cycles <- seq(0, nCycles-1, by = time)
   
   # discount factor
@@ -189,7 +185,7 @@ RunModel <- function(interventions,
   # calculate probability of death (from other causes, schizophrenia specific -- but not both)
   pDie <- p.death + p.Schizo.death - (p.death * p.Schizo.death)
   
-  # duabetes mean disutility (but put into RunModel function since they will need to be run through sensitivity analysis)
+  # diabetes mean disutility (but put into RunModel function since they will need to be run through sensitivity analysis)
   disutilDIAB <- pNeuro * dNeuro + pFoot * dFoot + pImpotent * dImpotent + pNephro * dNephro + dDiabetes
   
   # no need for function for these below as they do not depend on the alternative chosen
@@ -256,7 +252,7 @@ RunModel <- function(interventions,
                        nCycles = nCycles)
   
   # don't forget to detach
-  detach(beta1)
+  #detach(beta1)
   
   #interventions <- c("Chlorpromazine", "Haloperidol", "Quetiapine", "Risperidone", "Olanzapine")
   outcomes <- c(mTrace.cpz$DALYS, mTrace.hal$DALYS, mTrace.que$DALYS, mTrace.ris$DALYS, mTrace.ola$DALYS)
@@ -271,7 +267,8 @@ RunModel <- function(interventions,
   # ceef_analysis <- CE_Frontier(intervention = interventions, costs = costs, outcomes = outcomes, DALYs = TRUE)
   
   # return things in output I need for other functions
-  return(list(ce_result = output_tab, 
+  if(summary_only) return(list(costs=costs, outcomes=outcomes)) else 
+    return(list(ce_result = output_tab, 
               baseparms = baseparms, 
               basetransitions = basetransitions, 
               DALYs = DALYs))
@@ -422,21 +419,22 @@ ScatterPlot <- function(FrontierAnalysis) {
 }
 
 
-
 ## loop through base-case, high and low values and calculate model
-# function requires user to have run the incremental analysis, if not, run incremental within the function and extrace the things we need
+# function requires user to have run the incremental analysis, if not, ---> stop, ask user to run basecase first
+# run incremental within the function and extract the things we need
 owsa <- function(model, 
                  low_base, low_transitions, 
                  high_base, high_transitions, 
-                 outcome, comparator) {
+                 outcome, 
+                 comparator) {
   
   # generate base case from model object
   interventions <- model$ce_result %>%
     pull(intervention)
   base_case <- RunModel(interventions = interventions,
-                       baseparms = model$baseparms, 
-                       basetransitions = model$basetransitions, 
-                       DALYs = model$DALYs)
+                        baseparms = model$baseparms, 
+                        basetransitions = model$basetransitions,
+                        DALYs = model$DALYs)
   
   frontier <- IncrementalAnalysis(model = base_case)
   
@@ -614,6 +612,10 @@ TornadoPlot <- function(owsa_list, max_vars) {
 }
 
 
+## ----------------------------
+## PSA utilities
+## ----------------------------
+
 # functions to create intervals for the dirichlet distributions
 dir_interval <- function(prior) {
   prior <- unlist(prior)
@@ -630,8 +632,75 @@ vdirichlet <- function(n, alpha) {
   return(variates)
 }
 
+## process draws inside function for improved readability -- this function is only called once per analysis run 
+draw_psa_df <- function(nsims, parameters, transitions, interventions,
+                        basecase = "basecase", low = "low", high = "high") {
+  
+  # --- ONE-TIME parameter classification i.e., parameters by distribution type ----
+  betaparms    <- parameters %>% filter(dist == "beta")      %>% pull(variable)
+  normparms    <- parameters %>% filter(dist == "normal")    %>% pull(variable)
+  lognormparms <- parameters %>% filter(dist == "lognormal") %>% pull(variable)
+  fixedparms   <- parameters %>% filter(dist == "fixed")     %>% pull(variable)
+  
+  alphas <- parameters %>% pull(alpha, name = variable)
+  betas  <- parameters %>% pull(beta,  name = variable)
+  sems   <- parameters %>% pull(sem,   name = variable)
+  
+  base_vals <- getparms(parameters, value = basecase)
+  low_vals  <- getparms(parameters, value = low)
+  high_vals <- getparms(parameters, value = high)
+  
+  # ... then exactly the same code for Beta/Normal/Lognormal/Dirichlet draws ...
+  ## use tidyverse styling for readability
+  # --- Beta draws
+  beta_dt <- map_dfc(betaparms, ~{
+    tibble(!!.x := rbeta(nsims, alphas[.x], betas[.x]))
+  })
+  
+  # --- Normal draws
+  normal_dt <- map_dfc(normparms, ~{
+    tibble(!!.x := rnorm(nsims, mean = base_vals[.x], sd = sems[.x]))
+  })
+  
+  # --- Lognormal draws
+  logn_dt <- map_dfc(lognormparms, ~{
+    mu    <- log(base_vals[.x])
+    sigma <- (log(high_vals[.x]) - log(low_vals[.x])) / 3.92
+    tibble(!!.x := rlnorm(nsims, meanlog = mu, sdlog = sigma))
+  })
+  
+  # --- Dirichlet draws
+  dir_dt <- {
+    dir_rows <- transitions %>%
+      filter(dist == "dirichlet") %>%
+      pull(alpha, variable)
+    
+    randdirchinputs <- dir_rows %>%
+      split(., cut(seq_along(.),
+                   length(.)/length(interventions),
+                   labels = interventions))
+    
+    map(randdirchinputs, function(alpha) {
+      k <- length(alpha)
+      G <- matrix(rgamma(nsims * k, shape = rep(alpha, each = nsims)),
+                  nrow = nsims)
+      D <- G / rowSums(G)
+      colnames(D) <- names(alpha)
+      as_tibble(D)
+    }) %>% bind_cols()
+  }
+  
+  # --- Fixed parameters
+  fixed_dt <- if (length(fixedparms) > 0) {
+    tibble(!!!map(set_names(fixedparms), ~ rep(base_vals[.x], nsims)))
+  } else tibble()
+  
+  # --- Combine all blocks
+  return(bind_cols(beta_dt, normal_dt, logn_dt, dir_dt, fixed_dt))
+  
+}
 
-# this function calls the RunModel function on psalist
+# this is a wrapper function that calls the RunModel function on psalist
 # use it to extract the PSA trace of costs and outcomes
 genPSA <- function(model, psalist) {
   
@@ -639,21 +708,16 @@ genPSA <- function(model, psalist) {
   basenames <- names(model$baseparms)
   transitnames <- names(model$basetransitions)
   
-  costs <- c()
-  outcomes <- c()
-  
-  interventions <- model$ce_result %>%
-    pull(intervention)
+  interventions <- model$ce_result[["intervention"]]
   
   res <- RunModel(interventions = interventions,
                   baseparms = psalist[basenames],
                   basetransitions = psalist[transitnames])
   
-  costs <- res$ce_result %>%
-    pull(costs, intervention)
+  costs <- setNames(res$ce_result[["costs"]], res$ce_result[["intervention"]])
+  outcomes <- setNames(res$ce_result[["outcomes"]], res$ce_result[["intervention"]])
   
-  outcomes <- res$ce_result %>%
-    pull(outcomes, intervention)
+  #rm(res); gc()
   
   return(list(costs = costs, outcomes = outcomes))
   
@@ -662,34 +726,66 @@ genPSA <- function(model, psalist) {
 # psa_res <- lapply(split(psa_input, 1:nrow(psa_input)), FUN = RunPSA, base_case = model) %>%
 #   pmap(., bind_rows)
 
-RunPSA <- function(base_case, psalist) {
+RunPSA <- function(model, nsims, parameters, transitions, interventions) {
+  # --- 1. Precompute all draws once, outside of genPSA
+  psalist <- draw_psa_df(
+    nsims        = nsims,
+    parameters   = parameters,
+    transitions  = transitions,
+    interventions = interventions
+  )
   
-  # run PSA: split PSA inputs into lists by row, calculate PSA (map function), and pull costs and effects together into separate tibbles
-  psaTraces <- psalist %>%
-    transpose() %>% # convert each row of data into a separate list
-    map(.f = genPSA, model = base_case) %>% # apply function to each dataframe in the list to get CE pairs
-    pmap(., bind_rows) # pull together costs and outcomes into separate tables for WTP function
+  # --- 2. Split rows into list of 1-row tibbles
+  rowlist <- split(psalist, seq_len(nrow(psalist)))
+  psaTraces <- pblapply(rowlist, function(x) genPSA(model, x))
   
-  return(list(costs = psaTraces$costs, outcomes = psaTraces$outcomes))
+  # keep psalist intact and iterate by row index
+  # psaTraces <- pblapply(seq_len(nrow(psalist)), function(i) genPSA(model, psalist[i, ]))
   
+  # --- 4. Extract and bind results
+  costs    <- purrr::map_dfr(psaTraces, "costs")
+  outcomes <- purrr::map_dfr(psaTraces, "outcomes")
+  
+  return(list(costs = costs, outcomes = outcomes))
 }
 
 # function takes the maxwtp, a vector or dataframe of costs and outcomes for all interventions
 # and returns probability that a given intervention is cost effective 
-genProbCE <- function(wtp, costs, outcomes) {
+genProbCE <- function(psa_output, wtp) {
+  
+  # psa_res is a list with elements: costs, outcomes
+  costs <- as.matrix(psa_output$costs)
+  outcomes <- as.matrix(psa_output$outcomes)
+
   NMB <- outcomes*wtp - costs                   # NMB = DALYs * wtp - COSTS
-  maxNMB <- apply(NMB, MARGIN = 1, max)         # find maximum for each row (nax nmb)
-  whichMaxNMB <- (NMB == maxNMB)                # check which intervention has max NMB at that WTP, it is the most cost effective at that WTP
-  return(apply(whichMaxNMB, 2, mean))           # calculate probability of cost-effectiveness
+  #maxNMB <- apply(NMB, MARGIN = 1, max)         # find maximum for each row (max nmb)
+  maxNMB <- max.col(NMB, ties.method = "first")  ## much faster
+  #whichMaxNMB <- (NMB == maxNMB)                # check which intervention has max NMB at that WTP, it is the most cost effective at that WTP
+  #return(apply(whichMaxNMB, 2, mean))           # calculate probability of cost-effectiveness
+  
+  # tabulate probabilities
+  prob <- tabulate(maxNMB, nbins = ncol(NMB)) / nrow(NMB)
+  
+  # keep intervention names
+  names(prob) <- colnames(NMB)
+  return(prob)
 }
 
 
-RunCEAC <- function(costs, outcomes, wtp, by) {
+RunCEAC <- function(psa_output, wtp, by) {
   
-  # probability of cost effectiveness calculations
-  probCE <- map_dfr(seq(0, wtp, by = by), .f = genProbCE, costs = costs, outcomes = outcomes) %>%
-    bind_rows() %>%
-    bind_cols(WTP = seq(0, wtp, by = by), .)
+  wtps <- seq(0, wtp, by = by)
+  
+  # # probability of cost effectiveness calculations
+  # probCE <- map_dfr(wtps, .f = genProbCE, psa_output) %>%
+  #   # bind_rows() %>%
+  #   bind_cols(WTP = wtps, .)
+  
+  probCE <- t(sapply(wtps, FUN = function(x) genProbCE(psa_output, wtp = x))) %>% 
+    as_tibble() %>%
+    bind_cols(WTP = wtps, .)
+  
+  # use apply functions because they are easier to understand
   
   return(probCE)
   
