@@ -14,13 +14,13 @@ source(here::here("R", "00_packages.R"))
 source(here::here("R", "data_input.R"))
 source(here::here("R", "functions.R"))
 
-# load data and place in global environment for other functions to use
-list2env(read_inputs(), envir = .GlobalEnv)
+# load data (parameters, transition probabilities, CPI, life tables and model settings)
+inputs <- read_inputs()
 
 ## run model
-base_case <- RunModel(intervention = interventions, 
-                      baseparms = getparms(parameters, value = basecase), 
-                      basetransitions = getparms(transitions, value = basecase), 
+base_case <- RunModel(inputs,
+                      baseparms = getparms(inputs$parameters, value = basecase),
+                      basetransitions = getparms(inputs$transitions, value = basecase),
                       DALYs = TRUE)
 
 # perform incremental analysis (establish efficiency frontier)
@@ -32,10 +32,10 @@ ScatterPlot(CEAnalysis)
 ## ONE WAY SENSITIVITY ANALYSES
 # iterate over variables and perform OWSA
 dsa_res <- owsa(model = base_case,
-                low_base = getparms(parameters, value = low),
-                low_transitions = getTPset(transitions, value = low),
-                high_base = getparms(parameters, value = high),
-                high_transitions = getTPset(transitions, value = high),
+                low_base = getparms(inputs$parameters, value = low),
+                low_transitions = getTPset(inputs$transitions, value = low),
+                high_base = getparms(inputs$parameters, value = high),
+                high_transitions = getTPset(inputs$transitions, value = high),
                 outcome = "cost", intervention = "Haloperidol", comparator = "Chlorpromazine")
 
 # plot OWSA
@@ -46,23 +46,14 @@ TornadoPlot(owsa_list = dsa_res, max_vars = 30)
 # how many simulations?
 nsims <- 1000
 
-# run PSA and CEAC
-#profvis({
-psa_res <- RunPSA(
-  
-  model          = base_case,
-  nsims          = nsims,         # tibble of PSA draws
-  interventions  = interventions,
-  parameters     = parameters,
-  transitions    = transitions
-  )
-#})
+# run PSA (draws from the model's own parameter and transition tables)
+psa_res <- RunPSA(model = base_case, nsims = nsims)
 
 psa_res$costs    # nsims × n_interventions
 psa_res$outcomes # nsims × n_interventions
 
 plot_ly() %>%
-  add_trace(x = ~psa_res$outcomes$Chlorpromazine, y = ~psa_res$costs$Chlorpromazine, 
+  add_trace(x = ~psa_res$outcomes$Chlorpromazine, y = ~psa_res$costs$Chlorpromazine,
             type = 'scatter', mode = 'markers', name = "Chlorpromazine",
             marker = list(symbol = "circle-open", color = 'black',size = 7)) %>%
   add_trace(x = ~psa_res$outcomes$Risperidone, y = ~psa_res$costs$Risperidone,
@@ -84,19 +75,22 @@ plot_ly() %>%
 ## COST EFFECTIVENESS ACCEPTBILITY CURVE
 ceac_res <- RunCEAC(psa_output = psa_res, wtp = 4000, by = 1000)
 
+# colors
+col <- brewer.pal(6,"Dark2")
+
 plot_ly(ceac_res, x = ~WTP) %>%
   add_trace(y = ~Chlorpromazine, type = 'scatter', mode = 'lines+markers', name = "Chlorpromazine",
             line = list(shape = 'spline', color = col[1], width= 1.5),
             marker = list(symbol = "diamond", color = col[1], size = 9)) %>%
-  
+
   add_trace(y = ~Haloperidol, type = 'scatter', mode = 'lines+markers', name = "Haloperidol",
             line = list(shape = 'spline', color = col[2], width= 1.5),
             marker = list(symbol = "square", color = col[2], size = 8)) %>%
-  
+
   add_trace(y = ~Quetiapine, type = 'scatter', mode = 'lines+markers', name = "Quetiapine",
             line = list(shape = 'spline', color = col[3], width= 1.5),
             marker = list(symbol = "circle", color = col[3], size = 8)) %>%
-  
+
   add_trace(y = ~Olanzapine, type = 'scatter', mode = 'lines+markers', name = "Olanzapine",
             line = list(shape = 'spline', color = col[4], width= 1.5),
             marker = list(symbol = "x-thin-open", color = col[4], size = 8)) %>%
@@ -104,22 +98,7 @@ plot_ly(ceac_res, x = ~WTP) %>%
   add_trace(y = ~Risperidone, type = 'scatter', mode = 'lines+markers', name = "Risperidone",
             line = list(shape = 'spline', color = col[5], width= 1.5),
             marker = list(symbol = "asterisk-open", color = col[5], size = 8)) %>%
-  
-  layout(xaxis = list(title = 'Willingness-to-pay ($/DALY averted)'), 
+
+  layout(xaxis = list(title = 'Willingness-to-pay ($/DALY averted)'),
          yaxis = list(title = 'Probability Cost-Effective'),
          legend = list(orientation = 'v'))
-
-
-
-# 
-# psa_res <- lapply(split(psa_input, 1:nrow(psa_input)), FUN = RunPSA, base_case = model) %>%
-#   do.call("rbind", .)
-# 
-
-
-# psa_res2 <- psa_input %>% 
-#   purrr::transpose() %>% ## convert each row into a dataframe and combine dataframes into a list
-#   map(.f = RunPSA, base_case = model) %>% # apply function to each dataframe in the list
-#   bind_rows()
-
-

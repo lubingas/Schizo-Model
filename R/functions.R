@@ -15,8 +15,8 @@ diab.risk <- function(base.p, drug.RR) {
 }
 
 # 3) Price inflation: ratio of the CPI in year `to` to the CPI in year `from`,
-#    read from the CPI sheet of data_input.xlsx. Costs are reported in 2012 US$.
-cpi_ratio <- function(from, to = 2012) {
+#    from the CPI sheet of data_input.xlsx (inputs$cpi). Costs are reported in 2012 US$.
+cpi_ratio <- function(cpi, from, to = 2012) {
   cpi$Value[cpi$Year == to] / cpi$Value[cpi$Year == from]
 }
 
@@ -48,237 +48,190 @@ getTPset <- function(data, value) {
     split(stringr::str_extract(names(.), "(CPZ|HAL|OLA|RIS|QUE)$"))
 }
 
-## function to return markov traces for each intervention
-## INSTRUCTIONS
-# 1) first argument is a vector of parameters for first line agent in this order: c(disAE, disEff, disOther, pHosp, pWt, eps, diab, cost, qty)
-# 2) second argument is a vector of parameters for second line agent in this order: c(disAE, disEff, disOther, pHosp, pWt, eps, diab, cost, qty)
-# 3) third argument is the probability of hospitalization of untreated
-# 4) forth argument is the probability of remission when treated in the hospital
-# 5) fifth argument is the number of states (creates the two dimensional TP matrix)
-# 6) sixth argument is the number of cycles (to create the third dimension that captures time varying death probabilities)
-mtrace <- function(primary = numeric(), 
-                   secondary = numeric(), 
-                   pHospUntrt, 
-                   pRemit, 
-                   nStates, 
-                   nCycles) {
-  ## Set up 3 dimensional transition probability arrays for comparators (3rd dimension captures time varying death probabilities)
-  ## Then run memory based traces
-  trans <- array(0,c(nStates,nStates,nCycles))
-  trans[1,2,] <- primary[1] + primary[2]
-  trans[2,3,] <- secondary[1] + secondary[2]
-  
-  # residual on 1st line to residual off 1st line and residual on 2nd line to residual off 2nd line
-  trans[1,4,] <- primary[3]
-  trans[2,5,] <- secondary[3]
-  
-  # residual on 1st line to acute was on 1st line and residual on 2nd line to acute was on 2nd line
-  trans[1,8,] <- primary[4]
-  trans[2,9,] <- secondary[4]
-  
-  trans[4,6,] <- trans[5,7,] <- pHospUntrt
-  
-  trans[6,1,] <- trans[7,2,] <- trans[8,2,] <- trans[9,3,] <- pRemit
-  
-  ## get time varying death probabilities
-  for (i in 1:nCycles) {
-    # insert death probabilities
-    trans[,nStates,i] <- pDie[i]
-    # insert probability of remaining in the same state in each cycle (complement of rowsums)
-    diag(trans[,,i]) <- 1-rowSums(trans[,,i])
-  }
-  # set absorbing state (death) probability to 1
-  trans[nStates,nStates,] <- 1
-  
-  # NOW RUN THE MODEL TO GENERATE TRACES 
-  #Initialize population trace matrices [cycle,state,sojourn time]
-  trace <- array(0,c(nCycles,nStates,nCycles+1))
-  trace[1,,1] <- c(1,0,0,0,0,0,0,0,0,0)
-  
-  # index the cycles by c, and for each cycle calculate the proportions transiting 
-  for (c in 2:nCycles) {
-    for (cs in 1:(c-1)) {
-      ## get cycle specific transition matrix
-      cond.trans <- trans[,,cs]
-      # how many people transition from cycle c-1 to c? a matrix multiplication
-      new.state <- trace[c-1,,cs] %*% cond.trans
-      # update the trace array (keeping track of time in state)
-      trace[c,,cs+1] <- new.state + trace[c,,cs]
+## Markov trace, DALYs and costs for one treatment sequence
+# primary, secondary: parameters of the first- and second-line drug, in this order:
+#   c(disAE, disEff, disOther, pHosp, pWt, eps, diab, cost, qty)
+# pRemit: probability of remission when treated in hospital
+# p: list of model parameters plus the quantities RunModel() derives from them
+#    (death probabilities, life expectancy, discount factors, costs per state, ...)
+mtrace <- function(primary, secondary, pRemit, p) {
+  with(p, {
+    ## transition probability array; the 3rd dimension holds the age-specific death probabilities
+    trans <- array(0,c(nStates,nStates,nCycles))
+    trans[1,2,] <- primary[1] + primary[2]
+    trans[2,3,] <- secondary[1] + secondary[2]
+
+    # residual on 1st line to residual off 1st line and residual on 2nd line to residual off 2nd line
+    trans[1,4,] <- primary[3]
+    trans[2,5,] <- secondary[3]
+
+    # residual on 1st line to acute was on 1st line and residual on 2nd line to acute was on 2nd line
+    trans[1,8,] <- primary[4]
+    trans[2,9,] <- secondary[4]
+
+    trans[4,6,] <- trans[5,7,] <- pHospUntrt
+
+    trans[6,1,] <- trans[7,2,] <- trans[8,2,] <- trans[9,3,] <- pRemit
+
+    ## get time varying death probabilities
+    for (i in 1:nCycles) {
+      # insert death probabilities
+      trans[,nStates,i] <- pDie[i]
+      # insert probability of remaining in the same state in each cycle (complement of rowsums)
+      diag(trans[,,i]) <- 1-rowSums(trans[,,i])
     }
-  }
-  
-  # add up time spend in each state
-  pop.trace <- apply(trace,c(1,2),sum)
-  
-  # calculate YLL
-  int.YLL <- rowSums(pop.trace[,1:9])
-  YLL <- numeric()
-  YLL[1] <- 0
-  for (i in 2:nCycles) {
-    YLL[i] <- int.YLL[i-1] * expLife[i] * pDie[i-1]
-  }
-  
-  # calculate vector of utilities then count the DALYs
-  res.1st.line <- residualDALY + disutilWeight * primary[5] + eps.risk(pEPSPLA,primary[6]) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,primary[7]) * disutilDIAB
-  res.2nd.line <- residualDALY + disutilWeight * secondary[5] + eps.risk(pEPSPLA,secondary[6]) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,secondary[7]) * disutilDIAB
-  res.3rd.line <- residualDALY + disutilWeight * pWtFLU + eps.risk(pEPSPLA,epsFLU) * durEPS * disutilEPS + pDiabetesFLU * disutilDIAB
-  res.off.1st.line <- res.off.2nd.line <- residualDALY
-  ac.off.1st.line <- ac.off.2nd.line <- ac.was.on.1st.line <- ac.was.on.2nd.line <- acuteDALY + disutilWeight * pWtCPZ + eps.risk(pEPSPLA,epsCPZ) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,diabCPZ) * disutilDIAB
-  utils.vec <- c(res.1st.line, res.2nd.line, res.3rd.line, res.off.1st.line, res.off.2nd.line, ac.off.1st.line, ac.off.2nd.line, ac.was.on.1st.line, ac.was.on.2nd.line, 0)
-  
-  YLD <- pop.trace %*% utils.vec
-  DALYS <- discFactOutcomes * (YLL + YLD)
-  
-  YLD.trace <- cbind(pop.trace[,1] * res.1st.line, pop.trace[,2] * res.2nd.line, pop.trace[,3] * res.3rd.line, pop.trace[,4] * res.off.1st.line, pop.trace[,5] * res.off.2nd.line, pop.trace[,6] * ac.off.1st.line, pop.trace[,7] * ac.off.1st.line, pop.trace[,8] * ac.off.1st.line, pop.trace[,9] * ac.off.1st.line)
-  
-  # calculate vector of costs and compute total costs
-  c.res.1st <- op.drug.costs(primary[8], primary[9]) + eps.risk(pEPSPLA,primary[6]) * op.drug.costs(artane_cost, artane_qty) * durEPS + diab.risk(pDiabetesHAL,primary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
-  c.res.2nd <- op.drug.costs(secondary[8], secondary[9]) + eps.risk(pEPSPLA,secondary[6]) * op.drug.costs(artane_cost, artane_qty) * durEPS + diab.risk(pDiabetesHAL,secondary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
-  c.res.3rd <- fluphenazine_cost * fluphenazine_qty * 12 + eps.risk(pEPSPLA,epsFLU) * op.drug.costs(artane_cost, artane_qty) * durEPS + pDiabetesFLU * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
-  c.res.off.1st <- c.res.off.2nd <- 0
-  c.ac.off.1st <- c.ac.off.2nd <- c.ac.was.on.1st <- c.ac.was.on.2nd <- ip.drug.costs(chlorpromazine_cost, chlorpromazine_qty, LOS) + eps.risk(pEPSPLA,epsCPZ) * ip.drug.costs(artane_cost, artane_qty, LOS) + diab.risk(pDiabetesHAL,diabCPZ) * cDiabetes + ip.personnel.costs + ip.lab.costs + ip.capital.costs + ip.carer.travel.costs + ip.patient.travel.costs + ip.indirect + carer.indirect
-  
-  cost.trace <- cbind(pop.trace[,1] * c.res.1st, pop.trace[,2] * c.res.2nd, pop.trace[,3] * c.res.3rd, pop.trace[,4] * c.res.off.1st, pop.trace[,5] * c.res.off.2nd, pop.trace[,6] * c.ac.off.1st, pop.trace[,7] * c.ac.off.2nd, pop.trace[,8] * c.ac.was.on.1st, pop.trace[,9] * c.ac.was.on.2nd)
-  
-  cost.vec <- c(c.res.1st, c.res.2nd, c.res.3rd, c.res.off.1st, c.res.off.2nd, c.ac.off.1st, c.ac.off.2nd, c.ac.was.on.1st, c.ac.was.on.2nd, 0)
-  
-  costs <- discFactCosts * (pop.trace %*% cost.vec)
-  
-  # return objects we can work with
-  #return(list(trace = pop.trace, YLL = YLL, YLD.trace = YLD.trace, YLD = YLD, 
-  #            tot.DALYs = DALYS, DALYS = sum(DALYS), 
-  #            cost.trace = cost.trace, cost.vector = cost.vec, tot.costs = costs, Costs = sum(costs)))
-  
-  # return objects we can work with
-  return(list(DALYS = sum(DALYS), Costs = sum(costs)))
-  
+    # set absorbing state (death) probability to 1
+    trans[nStates,nStates,] <- 1
+
+    # cohort trace [cycle, state]: everyone starts in state 1 (residual, on the first-line drug)
+    # and moves with the transition matrix for their age in that cycle
+    pop.trace <- matrix(0, nCycles, nStates)
+    pop.trace[1, ] <- c(1,0,0,0,0,0,0,0,0,0)
+    for (c in 2:nCycles) {
+      pop.trace[c, ] <- pop.trace[c-1, ] %*% trans[,,c-1]
+    }
+
+    # calculate YLL
+    int.YLL <- rowSums(pop.trace[,1:9])
+    YLL <- numeric()
+    YLL[1] <- 0
+    for (i in 2:nCycles) {
+      YLL[i] <- int.YLL[i-1] * expLife[i] * pDie[i-1]
+    }
+
+    # calculate vector of utilities then count the DALYs
+    res.1st.line <- residualDALY + disutilWeight * primary[5] + eps.risk(pEPSPLA,primary[6]) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,primary[7]) * disutilDIAB
+    res.2nd.line <- residualDALY + disutilWeight * secondary[5] + eps.risk(pEPSPLA,secondary[6]) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,secondary[7]) * disutilDIAB
+    res.3rd.line <- residualDALY + disutilWeight * pWtFLU + eps.risk(pEPSPLA,epsFLU) * durEPS * disutilEPS + pDiabetesFLU * disutilDIAB
+    res.off.1st.line <- res.off.2nd.line <- residualDALY
+    ac.off.1st.line <- ac.off.2nd.line <- ac.was.on.1st.line <- ac.was.on.2nd.line <- acuteDALY + disutilWeight * pWtCPZ + eps.risk(pEPSPLA,epsCPZ) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,diabCPZ) * disutilDIAB
+    utils.vec <- c(res.1st.line, res.2nd.line, res.3rd.line, res.off.1st.line, res.off.2nd.line, ac.off.1st.line, ac.off.2nd.line, ac.was.on.1st.line, ac.was.on.2nd.line, 0)
+
+    YLD <- pop.trace %*% utils.vec
+    DALYS <- discFactOutcomes * (YLL + YLD)
+
+    YLD.trace <- cbind(pop.trace[,1] * res.1st.line, pop.trace[,2] * res.2nd.line, pop.trace[,3] * res.3rd.line, pop.trace[,4] * res.off.1st.line, pop.trace[,5] * res.off.2nd.line, pop.trace[,6] * ac.off.1st.line, pop.trace[,7] * ac.off.1st.line, pop.trace[,8] * ac.off.1st.line, pop.trace[,9] * ac.off.1st.line)
+
+    # calculate vector of costs and compute total costs
+    c.res.1st <- op.drug.costs(primary[8], primary[9]) + eps.risk(pEPSPLA,primary[6]) * op.drug.costs(artane_cost, artane_qty) * durEPS + diab.risk(pDiabetesHAL,primary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
+    c.res.2nd <- op.drug.costs(secondary[8], secondary[9]) + eps.risk(pEPSPLA,secondary[6]) * op.drug.costs(artane_cost, artane_qty) * durEPS + diab.risk(pDiabetesHAL,secondary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
+    c.res.3rd <- fluphenazine_cost * fluphenazine_qty * 12 + eps.risk(pEPSPLA,epsFLU) * op.drug.costs(artane_cost, artane_qty) * durEPS + pDiabetesFLU * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
+    c.res.off.1st <- c.res.off.2nd <- 0
+    c.ac.off.1st <- c.ac.off.2nd <- c.ac.was.on.1st <- c.ac.was.on.2nd <- ip.drug.costs(chlorpromazine_cost, chlorpromazine_qty, LOS) + eps.risk(pEPSPLA,epsCPZ) * ip.drug.costs(artane_cost, artane_qty, LOS) + diab.risk(pDiabetesHAL,diabCPZ) * cDiabetes + ip.personnel.costs + ip.lab.costs + ip.capital.costs + ip.carer.travel.costs + ip.patient.travel.costs + ip.indirect + carer.indirect
+
+    cost.trace <- cbind(pop.trace[,1] * c.res.1st, pop.trace[,2] * c.res.2nd, pop.trace[,3] * c.res.3rd, pop.trace[,4] * c.res.off.1st, pop.trace[,5] * c.res.off.2nd, pop.trace[,6] * c.ac.off.1st, pop.trace[,7] * c.ac.off.2nd, pop.trace[,8] * c.ac.was.on.1st, pop.trace[,9] * c.ac.was.on.2nd)
+
+    cost.vec <- c(c.res.1st, c.res.2nd, c.res.3rd, c.res.off.1st, c.res.off.2nd, c.ac.off.1st, c.ac.off.2nd, c.ac.was.on.1st, c.ac.was.on.2nd, 0)
+
+    costs <- discFactCosts * (pop.trace %*% cost.vec)
+
+    # return objects we can work with
+    #return(list(trace = pop.trace, YLL = YLL, YLD.trace = YLD.trace, YLD = YLD, 
+    #            tot.DALYs = DALYS, DALYS = sum(DALYS), 
+    #            cost.trace = cost.trace, cost.vector = cost.vec, tot.costs = costs, Costs = sum(costs)))
+
+    # return objects we can work with
+    list(DALYS = sum(DALYS), Costs = sum(costs))
+  })
 }
 
 
-RunModel <- function(interventions,
+RunModel <- function(inputs,
                      baseparms,
                      basetransitions,
                      DALYs = TRUE,
                      summary_only = FALSE) {
   
-  # need variable names from each element of these named vectors (improve this later)
-  parms <- c(baseparms, basetransitions)
-  list2env(as.list(parms), envir = environment())  # creates named parameters in *this* environment
-  #beta1 <- as.list(parms)
-  #attach(beta1)
+  # model parameters, used by name in the formulas below
+  p <- c(as.list(baseparms), as.list(basetransitions),
+         list(nStates = inputs$nStates, nCycles = inputs$nCycles))
   
+  # add the quantities derived from the parameters
+  p <- within(p, {
+    cycles <- seq(0, nCycles-1, by = time)
   
-  # ---------------------------------------------------------------------------------
-  # makes temp copy of mtrace function so variables created here are accessible to it
-  # without needing to place entire mtrace function in the RunModel function
-  # ---------------------------------------------------------------------------------
+    # discount factor
+    discFactCosts <- 1 / (1 + discCosts) ^ cycles
+    discFactOutcomes <- 1 / (1 + discOutcomes) ^ cycles
   
-  environment(mtrace) <- environment() 
-
-  cycles <- seq(0, nCycles-1, by = time)
+    ## age in each cycle
+    ages <- age + cycles
   
-  # discount factor
-  discFactCosts <- 1 / (1 + discCosts) ^ cycles
-  discFactOutcomes <- 1 / (1 + discOutcomes) ^ cycles
+    # match age in each cycle with a probability of death
+    p.death <- inputs$lifeTab$p.death[match(findInterval(x=ages,vec=inputs$lifeTab$ages),inputs$lifeTab$index)]
+    p.Schizo.death <- inputs$schizoTab$p.death[match(findInterval(x=ages,vec=inputs$schizoTab$ages),inputs$schizoTab$index)]
+    expLife <- inputs$lifeExp$yrs[match(findInterval(x=ages,vec=inputs$lifeExp$ages),inputs$lifeExp$index)]
   
-  ## age in each cycle
-  ages <- age + cycles
+    # calculate probability of death (from other causes, schizophrenia specific -- but not both)
+    pDie <- p.death + p.Schizo.death - (p.death * p.Schizo.death)
   
-  # match age in each cycle with a probability of death
-  p.death <- lifeTab$p.death[match(findInterval(x=ages,vec=lifeTab$ages),lifeTab$index)]
-  p.Schizo.death <- schizoTab$p.death[match(findInterval(x=ages,vec=schizoTab$ages),schizoTab$index)]
-  expLife <- lifeExp$yrs[match(findInterval(x=ages,vec=lifeExp$ages),lifeExp$index)]
+    # diabetes mean disutility (but put into RunModel function since they will need to be run through sensitivity analysis)
+    disutilDIAB <- pNeuro * dNeuro + pFoot * dFoot + pImpotent * dImpotent + pNephro * dNephro + dDiabetes
   
-  # calculate probability of death (from other causes, schizophrenia specific -- but not both)
-  pDie <- p.death + p.Schizo.death - (p.death * p.Schizo.death)
+    # no need for function for these below as they do not depend on the alternative chosen
+    # b) Personnel costs (a complicated formula)
+    ip.personnel.costs <- (((1/7)*(major_week*PSY_major*(duration_major/60)*(rate_psy/workhours_year))+(major_week*PCO_major*(duration_major/60)*(rate_pco/workhours_year))+(major_week*PNO_major*(duration_major/60)*(rate_pno/workhours_year))+(minor_week*PCO_minor*(duration_minor/60)*(rate_pco/workhours_year))+(minor_week*PNO_minor*(duration_minor/60)*(rate_pno/workhours_year)))+(PNO_drugadmin*(duration_drugadmin/60)))*time*LOS
+    op.personnel.costs <- (((duration_consult/60)*(PSY*PSY_prop*(rate_psy/workhours_year))+(PCO*(1-PSY_prop)*(rate_pco/workhours_year))+(nurse*nurse_prop*(rate_pno/workhours_year)))+(pharm*(duration_drugdisp/60)*(rate_pharm/workhours_year)))*visitation_frequency*time*12
   
-  # diabetes mean disutility (but put into RunModel function since they will need to be run through sensitivity analysis)
-  disutilDIAB <- pNeuro * dNeuro + pFoot * dFoot + pImpotent * dImpotent + pNephro * dNephro + dDiabetes
+    # c) laboratory costs
+    ip.lab.costs <- cpi_ratio(inputs$cpi, 2001)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq+TPHA_cost*TPHA_freq*TPHA_proportion+VDRL_cost*VDRL_freq*(1-TPHA_proportion)+HIV_cost*HIV_freq)*time*12
+    op.lab.costs <- (cpi_ratio(inputs$cpi, 2001)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq))*time*12
   
-  # no need for function for these below as they do not depend on the alternative chosen
-  # b) Personnel costs (a complicated formula)
-  ip.personnel.costs <- (((1/7)*(major_week*PSY_major*(duration_major/60)*(rate_psy/workhours_year))+(major_week*PCO_major*(duration_major/60)*(rate_pco/workhours_year))+(major_week*PNO_major*(duration_major/60)*(rate_pno/workhours_year))+(minor_week*PCO_minor*(duration_minor/60)*(rate_pco/workhours_year))+(minor_week*PNO_minor*(duration_minor/60)*(rate_pno/workhours_year)))+(PNO_drugadmin*(duration_drugadmin/60)))*time*LOS
-  op.personnel.costs <- (((duration_consult/60)*(PSY*PSY_prop*(rate_psy/workhours_year))+(PCO*(1-PSY_prop)*(rate_pco/workhours_year))+(nurse*nurse_prop*(rate_pno/workhours_year)))+(pharm*(duration_drugdisp/60)*(rate_pharm/workhours_year)))*visitation_frequency*time*12
+    # d) capital and overheads
+    ip.capital.costs <- capital_costs_per_inpatient_per_day*time*LOS
+    op.capital.costs <- capital_costs_per_outpatient_visit*visitation_frequency*time*12
   
-  # c) laboratory costs
-  ip.lab.costs <- cpi_ratio(2001)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq+TPHA_cost*TPHA_freq*TPHA_proportion+VDRL_cost*VDRL_freq*(1-TPHA_proportion)+HIV_cost*HIV_freq)*time*12
-  op.lab.costs <- (cpi_ratio(2001)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq))*time*12
+    # e) travel costs
+    ip.carer.travel.costs <- averagetravel_cost*2*caregiver_prop*(time*LOS*caregiver_freq)/every
+    op.carer.travel.costs <- caregiver_prop*averagetravel_cost*2*visitation_frequency*time*12
   
-  # d) capital and overheads
-  ip.capital.costs <- capital_costs_per_inpatient_per_day*time*LOS
-  op.capital.costs <- capital_costs_per_outpatient_visit*visitation_frequency*time*12
+    ip.patient.travel.costs <- averagetravel_cost*2
+    op.patient.travel.costs <- averagetravel_cost*2*visitation_frequency*time*12
   
-  # e) travel costs
-  ip.carer.travel.costs <- averagetravel_cost*2*caregiver_prop*(time*LOS*caregiver_freq)/every
-  op.carer.travel.costs <- caregiver_prop*averagetravel_cost*2*visitation_frequency*time*12
+    # f) Indirect costs
+    carer.indirect <- laborforcerate*(1-unemploymentrate)*GDP_percapita*time*DALY_caretaker*(264/365)
+    ip.indirect <- laborforcerate*(1-unemploymentrate)*GDP_percapita*time
+    op.indirect <- laborforcerate*(1-unemploymentrate)*(GDP_percapita/264)*(visitation_frequency*time*12)
+  })
   
-  ip.patient.travel.costs <- averagetravel_cost*2
-  op.patient.travel.costs <- averagetravel_cost*2*visitation_frequency*time*12
+  ## Markov traces for each treatment sequence (in the order of inputs$interventions)
+  traces <- with(p, {
+    mTrace.cpz <- mtrace(primary = c(disAECPZ, disEffCPZ, disOtherCPZ, pHospCPZ, pWtCPZ, epsCPZ, diabCPZ, chlorpromazine_cost, chlorpromazine_qty), 
+                         secondary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty), 
+                         pRemit = pRemitCPZ, p = p)
   
-  # f) Indirect costs
-  carer.indirect <- laborforcerate*(1-unemploymentrate)*GDP_percapita*time*DALY_caretaker*(264/365)
-  ip.indirect <- laborforcerate*(1-unemploymentrate)*GDP_percapita*time
-  op.indirect <- laborforcerate*(1-unemploymentrate)*(GDP_percapita/264)*(visitation_frequency*time*12)
+    mTrace.hal <- mtrace(primary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
+                         secondary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty), 
+                         pRemit = pRemitCPZ, p = p)
   
+    mTrace.ris <- mtrace(primary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty),
+                         secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
+                         pRemit = pRemitCPZ, p = p)
   
-  ## apply mtrace function to each of the drugs to return markov traces for each intervention
+    mTrace.ola <- mtrace(primary = c(disAEOLA, disEffOLA, disOtherOLA, pHospOLA, pWtOLA, epsOLA, diabOLA, olanzapine_cost, olanzapine_qty),
+                         secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
+                         pRemit = pRemitCPZ, p = p)
   
-  mTrace.cpz <- mtrace(primary = c(disAECPZ, disEffCPZ, disOtherCPZ, pHospCPZ, pWtCPZ, epsCPZ, diabCPZ, chlorpromazine_cost, chlorpromazine_qty), 
-                       secondary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty), 
-                       pHospUntrt = pHospUntrt, 
-                       pRemit = pRemitCPZ,
-                       nStates = nStates, 
-                       nCycles = nCycles)
+    mTrace.que <- mtrace(primary = c(disAEQUE, disEffQUE, disOtherQUE, pHospQUE, pWtQUE, epsQUE, diabQUE, quetiapine_cost, quetiapine_qty),
+                         secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
+                         pRemit = pRemitCPZ, p = p)
+    list(mTrace.cpz, mTrace.hal, mTrace.que, mTrace.ris, mTrace.ola)
+  })
   
-  mTrace.hal <- mtrace(primary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
-                       secondary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty), 
-                       pHospUntrt = pHospUntrt, 
-                       pRemit = pRemitCPZ,
-                       nStates = nStates, 
-                       nCycles = nCycles)
+  outcomes <- sapply(traces, `[[`, "DALYS")
+  costs <- sapply(traces, `[[`, "Costs")
   
-  mTrace.ris <- mtrace(primary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty),
-                       secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
-                       pHospUntrt = pHospUntrt, 
-                       pRemit = pRemitCPZ,
-                       nStates = nStates, 
-                       nCycles = nCycles)
-  
-  mTrace.ola <- mtrace(primary = c(disAEOLA, disEffOLA, disOtherOLA, pHospOLA, pWtOLA, epsOLA, diabOLA, olanzapine_cost, olanzapine_qty),
-                       secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
-                       pHospUntrt = pHospUntrt, 
-                       pRemit = pRemitCPZ,
-                       nStates = nStates, 
-                       nCycles = nCycles)
-  
-  mTrace.que <- mtrace(primary = c(disAEQUE, disEffQUE, disOtherQUE, pHospQUE, pWtQUE, epsQUE, diabQUE, quetiapine_cost, quetiapine_qty),
-                       secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
-                       pHospUntrt = pHospUntrt, 
-                       pRemit = pRemitCPZ,
-                       nStates = nStates, 
-                       nCycles = nCycles)
-  
-  # don't forget to detach
-  #detach(beta1)
-  
-  #interventions <- c("Chlorpromazine", "Haloperidol", "Quetiapine", "Risperidone", "Olanzapine")
-  outcomes <- c(mTrace.cpz$DALYS, mTrace.hal$DALYS, mTrace.que$DALYS, mTrace.ris$DALYS, mTrace.ola$DALYS)
-  costs <- c(mTrace.cpz$Costs, mTrace.hal$Costs, mTrace.que$Costs, mTrace.ris$Costs, mTrace.ola$Costs)
-  
-  output_tab <- tibble(intervention = interventions,
+  output_tab <- tibble(intervention = inputs$interventions,
                        costs = costs,
                        outcomes = outcomes)
-  
-  # establish efficiency frontier (CEEF)
-  # pass outputs into efficiency frontier function
-  # ceef_analysis <- CE_Frontier(intervention = interventions, costs = costs, outcomes = outcomes, DALYs = TRUE)
   
   # return things in output I need for other functions
   if(summary_only) return(list(costs=costs, outcomes=outcomes)) else 
     return(list(ce_result = output_tab, 
               baseparms = baseparms, 
               basetransitions = basetransitions, 
-              DALYs = DALYs))
+              DALYs = DALYs,
+              inputs = inputs))
   
 }
 
@@ -397,9 +350,7 @@ owsa <- function(model,
   }
   
   # generate base case from model object
-  interventions <- model$ce_result %>%
-    pull(intervention)
-  base_case <- RunModel(interventions = interventions,
+  base_case <- RunModel(model$inputs,
                         baseparms = model$baseparms, 
                         basetransitions = model$basetransitions,
                         DALYs = model$DALYs)
@@ -428,17 +379,19 @@ owsa <- function(model,
     # replace the current parameter with its low value and run the model
     low.input <- lowinputs[n]
     live[n] <- low.input
-    dsa.low <- RunModel(interventions = interventions,
+    dsa.low <- RunModel(model$inputs,
                         baseparms = live, 
-                        basetransitions = model$basetransitions)
+                        basetransitions = model$basetransitions,
+                        DALYs = model$DALYs)
     low_val <- pairwise(dsa.low)
     
     # replace the current parameter with its high value and run the model
     high.input <- highinputs[n]
     live[n] <- high.input
-    dsa.high <- RunModel(interventions = interventions,
+    dsa.high <- RunModel(model$inputs,
                          baseparms = live, 
-                         basetransitions = model$basetransitions)
+                         basetransitions = model$basetransitions,
+                         DALYs = model$DALYs)
     high_val <- pairwise(dsa.high)
     
     owsamat[i,] <- c(low_val, high_val)
@@ -459,17 +412,19 @@ owsa <- function(model,
     low.input <- low_transitions[[i]]
     live[names(low_transitions[[i]])] <- low.input
     
-    dsa.low <- RunModel(interventions = interventions,
+    dsa.low <- RunModel(model$inputs,
                         baseparms = model$baseparms, 
-                        basetransitions = live)
+                        basetransitions = live,
+                        DALYs = model$DALYs)
     low_val <- pairwise(dsa.low)
     
     # replace the current parameter-set with its high value and run the model
     high.input <- high_transitions[[i]]
     live[names(high_transitions[[i]])] <- high.input
-    dsa.high <- RunModel(interventions = interventions,
+    dsa.high <- RunModel(model$inputs,
                          baseparms = model$baseparms, 
-                         basetransitions = live)
+                         basetransitions = live,
+                         DALYs = model$DALYs)
     high_val <- pairwise(dsa.high)
 
     owsamat[i+length(low_base), ] <- c(low_val, high_val)
@@ -542,22 +497,6 @@ TornadoPlot <- function(owsa_list, max_vars) {
 ## ----------------------------
 ## PSA utilities
 ## ----------------------------
-
-# functions to create intervals for the dirichlet distributions
-dir_interval <- function(prior) {
-  prior <- unlist(prior)
-  posterior <- prior + rep(1, length=length(prior))
-  lower <- qgamma(.025,shape=posterior,rate=1)/sum(qgamma(.025,shape=posterior,rate=1))
-  upper <- qgamma(.975,shape=posterior,rate=1)/sum(qgamma(.975,shape=posterior,rate=1))
-  return(list(lower,upper))
-}
-
-# function to generate and name random dirichlet variates
-vdirichlet <- function(n, alpha) {
-  variates <- MCMCpack::rdirichlet(n, alpha)
-  colnames(variates) <- names(alpha)
-  return(variates)
-}
 
 ## process draws inside function for improved readability -- this function is only called once per analysis run 
 draw_psa_df <- function(nsims, parameters, transitions, interventions,
@@ -635,11 +574,10 @@ genPSA <- function(model, psalist) {
   basenames <- names(model$baseparms)
   transitnames <- names(model$basetransitions)
   
-  interventions <- model$ce_result[["intervention"]]
-  
-  res <- RunModel(interventions = interventions,
+  res <- RunModel(model$inputs,
                   baseparms = psalist[basenames],
-                  basetransitions = psalist[transitnames])
+                  basetransitions = psalist[transitnames],
+                  DALYs = model$DALYs)
   
   costs <- setNames(res$ce_result[["costs"]], res$ce_result[["intervention"]])
   outcomes <- setNames(res$ce_result[["outcomes"]], res$ce_result[["intervention"]])
@@ -653,13 +591,16 @@ genPSA <- function(model, psalist) {
 # psa_res <- lapply(split(psa_input, 1:nrow(psa_input)), FUN = RunPSA, base_case = model) %>%
 #   pmap(., bind_rows)
 
-RunPSA <- function(model, nsims, parameters, transitions, interventions) {
+# parameters, transitions: the tables to draw from (by default, the model's own inputs)
+RunPSA <- function(model, nsims,
+                   parameters = model$inputs$parameters,
+                   transitions = model$inputs$transitions) {
   # --- 1. Precompute all draws once, outside of genPSA
   psalist <- draw_psa_df(
     nsims        = nsims,
     parameters   = parameters,
     transitions  = transitions,
-    interventions = interventions
+    interventions = model$inputs$interventions
   )
   
   # --- 2. Split rows into list of 1-row tibbles

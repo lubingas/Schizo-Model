@@ -1,9 +1,7 @@
-
-# some preliminary data to run model
-# these are not varied in sensitivity analyses
-nStates <- 10
-nCycles <- 70
-interventions <- c("Chlorpromazine", "Haloperidol", "Quetiapine", "Risperidone", "Olanzapine")
+# R/data_input.R
+# ---------------------------
+# Reads all model inputs into one list
+# ---------------------------
 
 read_inputs <- function(path = here::here("data", "data_input.xlsx")) {
   required_sheets <- c(
@@ -14,16 +12,12 @@ read_inputs <- function(path = here::here("data", "data_input.xlsx")) {
     schizoTab = "Schizo Death Probability",
     lifeExp = "Life Expectancy"
   )
-  
-  purrr::imap(required_sheets, ~ readxl::read_excel(path, sheet = .x))
 
+  inputs <- purrr::map(required_sheets, ~ readxl::read_excel(path, sheet = .x))
+
+  # model settings; these are not varied in sensitivity analyses
+  c(inputs,
+    list(nStates = 10,
+         nCycles = 70,
+         interventions = c("Chlorpromazine", "Haloperidol", "Quetiapine", "Risperidone", "Olanzapine")))
 }
-
-
-# inputs for PSA
-
-
-# colors
-col <- brewer.pal(6,"Dark2")
-
-

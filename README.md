@@ -15,7 +15,8 @@ It is a 10-state Markov cohort model with 70 annual cycles. Outcomes are costs (
 | `new_model_10_21_15.xlsm` | The original Excel model (2015) |
 | `data/data_input.xlsx` | All inputs: parameters, transition probabilities, CPI, life tables |
 | `R/functions.R` | Model, cost-effectiveness frontier, one-way and probabilistic sensitivity analyses |
-| `R/data_input.R` | Reads the inputs |
+| `R/data_input.R` | Reads the inputs and model settings into one list |
+| `R/00_packages.R` | Loads the packages the model uses |
 | `main.R` | Runs the base case, one-way analysis (tornado), PSA and acceptability curves |
 
 ## Changes since the 2015 publication
@@ -48,4 +49,16 @@ In the Excel model, olanzapine cost $5,868 per DALY averted compared with risper
 
 ## Running it
 
-Open `Schizo-Model.Rproj` in RStudio and run `main.R`.
+Install the packages listed at the top of `R/00_packages.R`, then open `Schizo-Model.Rproj` in RStudio and run `main.R`.
+
+The model functions take everything they need as arguments:
+
+```r
+inputs <- read_inputs()   # input tables, plus nStates, nCycles and interventions
+base_case <- RunModel(inputs,
+                      baseparms = getparms(inputs$parameters, value = basecase),
+                      basetransitions = getparms(inputs$transitions, value = basecase))
+psa_res <- RunPSA(base_case, nsims = 1000)
+```
+
+The result of `RunModel()` carries its inputs, so `owsa()` and `RunPSA()` only need the model object.
