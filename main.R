@@ -36,7 +36,7 @@ dsa_res <- owsa(model = base_case,
                 low_transitions = getTPset(transitions, value = low),
                 high_base = getparms(parameters, value = high),
                 high_transitions = getTPset(transitions, value = high),
-                outcome = "cost", comparator = "Haloperidol")
+                outcome = "cost", intervention = "Haloperidol", comparator = "Chlorpromazine")
 
 # plot OWSA
 TornadoPlot(owsa_list = dsa_res, max_vars = 30)

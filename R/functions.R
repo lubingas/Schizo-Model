@@ -14,7 +14,13 @@ diab.risk <- function(base.p, drug.RR) {
   return(base.p * drug.RR)
 }
 
-# 3) costs models
+# 3) Price inflation: ratio of the CPI in year `to` to the CPI in year `from`,
+#    read from the CPI sheet of data_input.xlsx. Costs are reported in 2012 US$.
+cpi_ratio <- function(from, to = 2012) {
+  cpi$Value[cpi$Year == to] / cpi$Value[cpi$Year == from]
+}
+
+# 4) costs models
 # a) drug costs
 ip.drug.costs <- function(cost, qty) {
   return(cost * qty * 60)
@@ -129,7 +135,8 @@ mtrace <- function(primary = numeric(),
   c.res.2nd <- op.drug.costs(secondary[8], secondary[9]) + eps.risk(pEPSPLA,secondary[6]) * ip.drug.costs(artane_cost, artane_qty) + diab.risk(pDiabetesHAL,secondary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
   c.res.3rd <- fluphenazine_cost * fluphenazine_qty * 12 + eps.risk(pEPSPLA,epsFLU) * ip.drug.costs(artane_cost, artane_qty) + pDiabetesFLU * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
   c.res.off.1st <- c.res.off.2nd <- 0
-  c.ac.off.1st <- c.ac.off.2nd <- c.ac.was.on.1st <- c.ac.was.on.2nd <- ip.drug.costs(chlorpromazine_cost, chlorpromazine_qty)*196.46/149.97 + eps.risk(pEPSPLA,epsCPZ) * ip.drug.costs(artane_cost, artane_qty)*(196.46/145.14) + diab.risk(pDiabetesHAL,diabCPZ) * cDiabetes + ip.personnel.costs + ip.lab.costs + ip.capital.costs + ip.carer.travel.costs + ip.patient.travel.costs + ip.indirect + carer.indirect
+  # Artane price index 145.14 is not in the CPI sheet (2009 = 144.24); kept as in the 2015 Excel model until the source year is confirmed
+  c.ac.off.1st <- c.ac.off.2nd <- c.ac.was.on.1st <- c.ac.was.on.2nd <- ip.drug.costs(chlorpromazine_cost, chlorpromazine_qty)*cpi_ratio(2010) + eps.risk(pEPSPLA,epsCPZ) * ip.drug.costs(artane_cost, artane_qty)*(196.46/145.14) + diab.risk(pDiabetesHAL,diabCPZ) * cDiabetes + ip.personnel.costs + ip.lab.costs + ip.capital.costs + ip.carer.travel.costs + ip.patient.travel.costs + ip.indirect + carer.indirect
   
   cost.trace <- cbind(pop.trace[,1] * c.res.1st, pop.trace[,2] * c.res.2nd, pop.trace[,3] * c.res.3rd, pop.trace[,4] * c.res.off.1st, pop.trace[,5] * c.res.off.2nd, pop.trace[,6] * c.ac.off.1st, pop.trace[,7] * c.ac.off.2nd, pop.trace[,8] * c.ac.was.on.1st, pop.trace[,9] * c.ac.was.on.2nd)
   
@@ -194,8 +201,8 @@ RunModel <- function(interventions,
   op.personnel.costs <- (((duration_consult/60)*(PSY*PSY_prop*(rate_psy/workhours_year))+(PCO*(1-PSY_prop)*(rate_pco/workhours_year))+(nurse*nurse_prop*(rate_pno/workhours_year)))+(pharm*(duration_drugdisp/60)*(rate_pharm/workhours_year)))*visitation_frequency*time*12
   
   # c) laboratory costs
-  ip.lab.costs <- (196.64/82.04)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq+TPHA_cost*TPHA_freq*TPHA_proportion+VDRL_cost*VDRL_freq*(1-TPHA_proportion)*HIV_freq)*time*12
-  op.lab.costs <- ((196.64/82.04)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq))*time*12
+  ip.lab.costs <- cpi_ratio(2001)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq+TPHA_cost*TPHA_freq*TPHA_proportion+VDRL_cost*VDRL_freq*(1-TPHA_proportion)+HIV_cost*HIV_freq)*time*12
+  op.lab.costs <- (cpi_ratio(2001)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq))*time*12
   
   # d) capital and overheads
   ip.capital.costs <- capital_costs_per_inpatient_per_day*time*LOS
@@ -280,120 +287,70 @@ RunModel <- function(interventions,
 # input 3 vectors: 1) intervention, 2) costs, and 3) outcomes
 # if we are working with DALYs, then reverse sort order
 IncrementalAnalysis <- function(model) {
-  
-  # gather things we need from model object
-  res_tab <- model$ce_result
-  costs <- res_tab %>%
-    pull(costs, intervention)
-  outcomes <- res_tab %>%
-    pull(outcomes, intervention)
-  intervention <- res_tab %>%
-    pull(intervention)
-  DALYs <- model$DALYs
-  
-  # initialize a vector where we will keep interventions on the frontier
-  frontier <- c()
-  
-  # make a table we can use
-  # 1. order interventions by DALYs in descending order (intervention with highest DALYs first)
-  # 2. calculate ICER relative to intervention with highest DALYs
-  # 3. determine whether ICER or dominant with highest DALY intervention as reference
-  output <- res_tab %>%
-    arrange(if (DALYs) desc(outcomes) else (outcomes)) %>%# arrange by outcomes, first row is first intervention on frontier
-    mutate(delta_outcomes = if (DALYs) (first(outcomes) - outcomes) else (outcomes - first(outcomes)), # calculate incrementals
-           delta_costs = costs - first(costs), 
-           iCER = (delta_costs/delta_outcomes), # calculate iCERs relative to intervention with highests DALYs
-           dom = if_else(is.nan(iCER), "Ref", if_else(iCER > 0, "ICER", "Dominant"))) # check dominance
-  
-  # temporarily store output so I can access at the end to select original estimates of interventions on the CEEF
-  temp_output <- output %>%
-    select(-c(iCER, dom))
-  
-  # after arrange, first row is the first element of the CEEF
-  # 0.intervention 1 is the origin of the CEEF (status quo)
-  
-  i <- 1
-  
-  frontier[i] <- output$intervention[1]
-  
-  # loop through the possibilities
-  while (nrow(output) > 2) { # stop when there are only two interventions
-    # CEEF logic
-    #    check on second intervention: if dominant over intervention 1, then it is next point on the CEEF,
-    #    else if intervention 2 has a positive ICER and intervention 3 is dominant over intervention 1, 
-    #    then drop intervention 2 (it is extended dominated)
-    
-    # check on intervention 2: if dominant, then it is next point on the CEEF,
-    if(output$dom[2] == "Dominant") {
-      
-      # add this intervention to the frontier
-      frontier[i+1] <- output$intervention[2]
-      
-      # and remove intervention 1 from the output dataframe, such that this one becomes the new starting point for the CEEF
-      output <- output[-1, ]
-      
-    } else if (output$dom[2] =="ICER") { # if in 2nd row we have +ve iCER
-      
-      ## nested if to check on 3rd row
-      if (output$iCER[3] > output$iCER[2]) { # if iCER for intervention in third row is greater than that in row 2
-        # output$intervention[2] becomes the new origin on the CEEF and it is added to the frontier
-        frontier[i+1] <- output$intervention[2]
-        # and remove intervention 1 from the output dataframe
-        output <- output[-1, ]
-        
-      } else if (output$iCER[3] < output$iCER[2]) {
-        # output$intervention[2] is extended dominated, so remove it from the output dataframe (or collect in separate list)
-        # output$intervention[3] becomes the new starting point on the frontier (i.e. delete both interventions 1 and 2)
-        frontier[i+1] <- output$intervention[3]
-        output <- output[-c(1,2), ]
-        
-      } else {
-        stop("error")
-      }
-    }
-    
-    # after checks, identifying new point on CEEF, arrange and calculate everything again
-    output <- output %>%
-      arrange(if (DALYs) desc(outcomes) else (outcomes)) %>%# arrange by outcomes, first row is first intervention on frontier
-      mutate(delta_outcomes = if (DALYs) (first(outcomes) - outcomes) else (outcomes - first(outcomes)), # calculate incrementals
-             delta_costs = costs - first(costs), 
-             iCER = (delta_costs/delta_outcomes), # calculate iCERs relative to intervention with highest
-             dom = if_else(is.nan(iCER), "Ref", if_else(iCER > 0, "ICER", "Dominant"))) # check dominance
-    
-    i <- i + 1
-    
-  }
-  
-  # send final element to frontier vector
-  frontier[i+1] <- output$intervention[2]
-  
-  # which interventions are not on the frontier
-  extended_dom <- intervention[!(intervention %in% frontier)]
-  
-  on_frontier <- temp_output %>%
-    filter(intervention %in% frontier)
-  
-  # this table will summarize the incremental outcomes we are interested in along the CEEF
-  res_table <- temp_output %>%
-    filter(intervention %in% frontier) %>%
-    mutate(delta_costs = costs - lag(costs),
-           delta_outcomes = if (DALYs) -1*(outcomes - lag(outcomes)) else (outcomes - lag(outcomes)),
-           iCER = delta_costs/delta_outcomes) %>% 
-    replace(is.na(.), 0) %>% 
-    mutate(explanation = case_when(iCER == 0 ~ "Ref",
-                                   delta_costs < 0 & delta_outcomes < 0 ~ "Dominant",
-                                   delta_costs < 0 & delta_outcomes > 0 ~ paste0("Dominant over ", lag(intervention)),
-                                   delta_costs > 0 & delta_outcomes > 0 ~ paste0("iCER versus ", lag(intervention)))) %>% 
-    select(intervention, costs, outcomes, delta_costs, delta_outcomes, iCER, explanation)
-  
-  return(list(ce_points = temp_output, 
-              ce_lines = on_frontier, 
-              incrementals = res_table, 
-              extended_dominated = extended_dom, 
-              outcome_to_plot = if(DALYs) "DALYs averted" else "QALYs gained"))
-  
-}
 
+  # Cost-effectiveness frontier (efficiency frontier):
+  #   1. drop options that are strongly dominated (another option costs no more
+  #      and is at least as effective, and is strictly better on one of the two)
+  #   2. order the rest by cost and drop options that are extendedly dominated
+  #      (their ICER is higher than that of the next, more effective option)
+  #   3. report ICERs between consecutive options on the frontier
+  res_tab <- model$ce_result
+  DALYs   <- model$DALYs
+  # effectiveness: higher is better (DALYs incurred are negated)
+  eff  <- if (DALYs) -res_tab$outcomes else res_tab$outcomes
+  cost <- res_tab$costs
+  n    <- nrow(res_tab)
+
+  strongly <- vapply(seq_len(n), function(i) {
+    any(cost[-i] <= cost[i] & eff[-i] >= eff[i] & (cost[-i] < cost[i] | eff[-i] > eff[i]))
+  }, logical(1))
+
+  cand <- which(!strongly)
+  cand <- cand[order(cost[cand], -eff[cand])]
+  extended <- integer(0)
+  repeat {
+    if (length(cand) < 3) break
+    icer <- diff(cost[cand]) / diff(eff[cand])
+    bad  <- which(icer[-length(icer)] > icer[-1])
+    if (!length(bad)) break
+    extended <- c(extended, cand[bad[1] + 1])
+    cand <- cand[-(bad[1] + 1)]
+  }
+  frontier <- res_tab$intervention[cand]
+
+  status <- ifelse(strongly, "Dominated",
+            ifelse(seq_len(n) %in% extended, "Extendedly dominated", "On frontier"))
+
+  # all options, relative to the least effective one (used for the scatter plot)
+  ce_points <- res_tab %>%
+    mutate(status = status) %>%
+    arrange(if (DALYs) desc(outcomes) else outcomes) %>%
+    mutate(delta_outcomes = if (DALYs) first(outcomes) - outcomes else outcomes - first(outcomes),
+           delta_costs = costs - first(costs))
+
+  ce_lines <- ce_points %>%
+    filter(intervention %in% frontier) %>%
+    arrange(delta_outcomes)
+
+  # ICERs between consecutive frontier options, cheapest first
+  incrementals <- ce_lines %>%
+    select(intervention, costs, outcomes) %>%
+    arrange(costs) %>%
+    mutate(delta_costs    = costs - lag(costs),
+           delta_outcomes = if (DALYs) lag(outcomes) - outcomes else outcomes - lag(outcomes),
+           iCER           = delta_costs / delta_outcomes,
+           explanation    = if_else(is.na(lag(intervention)),
+                                    if (n() == 1) "Ref (dominates all other options)" else "Ref",
+                                    paste0("iCER versus ", lag(intervention)))) %>%
+    mutate(across(c(delta_costs, delta_outcomes, iCER), ~ replace(.x, is.na(.x), 0)))
+
+  list(ce_points = ce_points,
+       ce_lines = ce_lines,
+       incrementals = incrementals,
+       dominated = res_tab$intervention[strongly],
+       extended_dominated = res_tab$intervention[extended],
+       outcome_to_plot = if (DALYs) "DALYs averted" else "QALYs gained")
+}
 
 
 ScatterPlot <- function(FrontierAnalysis) {
@@ -426,7 +383,18 @@ owsa <- function(model,
                  low_base, low_transitions, 
                  high_base, high_transitions, 
                  outcome, 
+                 intervention,
                  comparator) {
+
+  # Result of interest: `intervention` versus `comparator` --
+  # incremental cost ("cost"), DALYs averted / QALYs gained ("outcome") or ICER ("ICER")
+  pairwise <- function(m) {
+    r  <- m$ce_result
+    dc <- r$costs[r$intervention == intervention] - r$costs[r$intervention == comparator]
+    do <- if (m$DALYs) r$outcomes[r$intervention == comparator] - r$outcomes[r$intervention == intervention]
+          else r$outcomes[r$intervention == intervention] - r$outcomes[r$intervention == comparator]
+    switch(outcome, ICER = dc / do, cost = dc, outcome = do)
+  }
   
   # generate base case from model object
   interventions <- model$ce_result %>%
@@ -436,17 +404,7 @@ owsa <- function(model,
                         basetransitions = model$basetransitions,
                         DALYs = model$DALYs)
   
-  frontier <- IncrementalAnalysis(model = base_case)
-  
-  # on what outcome, should DSA be run?
-  #on_outcome <- model[[1]][[5]]
-
-  base.case <- frontier$incrementals %>%
-    filter(intervention %in% comparator) %>%
-    pull(switch(outcome,
-                ICER=iCER,
-                cost=delta_costs,
-                outcome=delta_outcomes))
+  base.case <- pairwise(base_case)
   
   # set up matrix to collect the results
   owsamat <- matrix(NA,
@@ -473,15 +431,7 @@ owsa <- function(model,
     dsa.low <- RunModel(interventions = interventions,
                         baseparms = live, 
                         basetransitions = model$basetransitions)
-    frontier.low <- IncrementalAnalysis(model = dsa.low)
-    
-    # extract value for outcome and comparator of interest
-    low_val <- frontier.low$incrementals %>%
-      filter(intervention %in% comparator) %>%
-      pull(switch(outcome,
-                  ICER=iCER,
-                  cost=delta_costs,
-                  outcome=delta_outcomes))
+    low_val <- pairwise(dsa.low)
     
     # replace the current parameter with its high value and run the model
     high.input <- highinputs[n]
@@ -489,14 +439,7 @@ owsa <- function(model,
     dsa.high <- RunModel(interventions = interventions,
                          baseparms = live, 
                          basetransitions = model$basetransitions)
-    frontier.high <- IncrementalAnalysis(model = dsa.high)
-    
-    high_val <- frontier.high$incrementals %>%
-      filter(intervention %in% comparator) %>%
-      pull(switch(outcome,
-                  ICER=iCER,
-                  cost=delta_costs,
-                  outcome=delta_outcomes))
+    high_val <- pairwise(dsa.high)
     
     owsamat[i,] <- c(low_val, high_val)
 
@@ -519,15 +462,7 @@ owsa <- function(model,
     dsa.low <- RunModel(interventions = interventions,
                         baseparms = model$baseparms, 
                         basetransitions = live)
-    frontier.low <- IncrementalAnalysis(model = dsa.low)
-    
-    # extract value for outcome and comparator of interest
-    low_val <- frontier.low$incrementals %>%
-      filter(intervention %in% comparator) %>%
-      pull(switch(outcome,
-                  ICER=iCER,
-                  cost=delta_costs,
-                  outcome=delta_outcomes))
+    low_val <- pairwise(dsa.low)
     
     # replace the current parameter-set with its high value and run the model
     high.input <- high_transitions[[i]]
@@ -535,15 +470,7 @@ owsa <- function(model,
     dsa.high <- RunModel(interventions = interventions,
                          baseparms = model$baseparms, 
                          basetransitions = live)
-    frontier.high <- IncrementalAnalysis(model = dsa.high)
-    
-    # get the result we want and place it in our results matrix
-    high_val <- frontier.high$incrementals %>%
-      filter(intervention %in% comparator) %>%
-      pull(switch(outcome,
-                  ICER=iCER,
-                  cost=delta_costs,
-                  outcome=delta_outcomes))
+    high_val <- pairwise(dsa.high)
 
     owsamat[i+length(low_base), ] <- c(low_val, high_val)
     
@@ -576,7 +503,7 @@ TornadoPlot <- function(owsa_list, max_vars) {
   col <- brewer.pal(3,"Dark2")
   
   # filter for those with perc impact on outcome
-  owsa_torn <- dsa_res$owsa_data %>%
+  owsa_torn <- owsa_tab %>%
     slice_max(range, n = max_vars) %>%
     arrange(range)
   
