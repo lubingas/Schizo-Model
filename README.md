@@ -33,20 +33,21 @@ The published results came from the Excel model, which is kept in this repositor
 | **Haloperidol dose** | One 10 mg tablet a day at $0.0206 | Two 5 mg tablets a day at $0.022, as in Table 2 of the paper | +$9 to +$12 (haloperidol, and the three drugs that use it second line) |
 | **Quetiapine price** | $0.388 per 200 mg tablet | $0.188, the pharmacy-survey price in Table 2 of the paper. The source of $0.388 could not be traced | −$276 (quetiapine only) |
 | **Benzhexol in residual states** (bug) | Outpatients with extrapyramidal symptoms (EPS) were costed for the 60-day inpatient supply of benzhexol. The cell for an outpatient supply was never used | Costed for the duration of EPS (`durEPS`, 0.25 years), the duration used for the disability from EPS | +$0.4 to +$0.5 |
+| **Background mortality** (bug) | The WHO life table for Uganda gives the probability of dying within each 5-year age group (₅qₓ). These were used as yearly probabilities, so people died about five times too fast: life expectancy from age 25 was 16.7 years, against 39 years in the same life table | The 5-year probabilities are converted to yearly ones, 1 − (1 − ₅qₓ)^(1/5), using the width of each age group. Life expectancy from age 25 is now 33.3 years, including the extra mortality from schizophrenia | +$2,619 to +$2,657; DALYs −5.54 to −5.55 |
 
-Inpatient drug costs follow the length of stay, as in the Excel model; this matters only in the sensitivity analyses. The fluphenazine decanoate price ($1.406 per 25 mg ampoule, from the NMS October 2010 catalogue) is kept as published, although it cannot be reproduced from the catalogue price of 3,950 UGX per ampoule at 2,577 UGX/$.
+Inpatient drug costs follow the length of stay, as in the Excel model; this matters only in the sensitivity analyses. The fluphenazine decanoate price ($1.406 per 25 mg ampoule, from the NMS October 2010 catalogue) is kept as published, although it cannot be reproduced from the catalogue price of 3,950 UGX per ampoule at 2,577 UGX/$. The schizophrenia-related death probabilities (WHO 2008 deaths by cause, in wider age bands) are used as yearly probabilities, as before.
 
-Base-case results, cost per patient (2012 US$):
+Base-case results per patient (costs in 2012 US$):
 
-| Drug | Excel model (2015) | R model | DALYs |
-|---|---|---|---|
-| Chlorpromazine | $4,617 | $5,084 | 27.608 |
-| Haloperidol | $4,440 | $4,843 | 27.563 |
-| Quetiapine | $4,943 | $5,070 | 27.562 |
-| Risperidone | $4,424 | $4,817 | 27.557 |
-| Olanzapine | $4,454 | $4,816 | 27.552 |
+| Drug | Cost, Excel model (2015) | Cost, R model | DALYs, Excel model | DALYs, R model |
+|---|---|---|---|---|
+| Chlorpromazine | $4,617 | $7,741 | 27.608 | 22.066 |
+| Haloperidol | $4,440 | $7,462 | 27.563 | 22.012 |
+| Quetiapine | $4,943 | $7,708 | 27.562 | 22.009 |
+| Risperidone | $4,424 | $7,443 | 27.557 | 22.008 |
+| Olanzapine | $4,454 | $7,445 | 27.552 | 22.003 |
 
-In the Excel model, olanzapine cost $5,868 per DALY averted compared with risperidone. In the R model, olanzapine has the lowest cost and the fewest DALYs, so it dominates the other four drugs. Its cost advantage over risperidone is under $1 per patient, so the probabilistic analysis matters more than the point estimate.
+In the Excel model, olanzapine cost $5,868 per DALY averted compared with risperidone. In the R model, chlorpromazine, haloperidol and quetiapine are dominated. Risperidone costs the least; olanzapine costs $1.63 more per patient and averts 0.005 DALYs, or $332 per DALY averted. That is below three times Uganda's 2012 GDP per capita ($1,641), so olanzapine is the cost-effective choice at that threshold, but the differences are small enough that the probabilistic analysis matters more than the point estimate.
 
 ## Running it
 

@@ -147,6 +147,12 @@ RunModel <- function(inputs,
   p <- c(as.list(baseparms), as.list(basetransitions),
          list(nStates = inputs$nStates, nCycles = inputs$nCycles))
   
+  # Background mortality: the life table gives the probability of dying within each age band
+  # (5-year bands in the WHO life table for Uganda), so convert it to a yearly probability
+  lt <- inputs$lifeTab
+  band <- c(diff(lt$ages), tail(diff(lt$ages), 1))
+  q_year <- 1 - (1 - lt$p.death)^(1 / band)
+  
   # add the quantities derived from the parameters
   p <- within(p, {
     cycles <- seq(0, nCycles-1, by = time)
@@ -159,7 +165,7 @@ RunModel <- function(inputs,
     ages <- age + cycles
   
     # match age in each cycle with a probability of death
-    p.death <- inputs$lifeTab$p.death[match(findInterval(x=ages,vec=inputs$lifeTab$ages),inputs$lifeTab$index)]
+    p.death <- q_year[match(findInterval(x=ages,vec=inputs$lifeTab$ages),inputs$lifeTab$index)]
     p.Schizo.death <- inputs$schizoTab$p.death[match(findInterval(x=ages,vec=inputs$schizoTab$ages),inputs$schizoTab$index)]
     expLife <- inputs$lifeExp$yrs[match(findInterval(x=ages,vec=inputs$lifeExp$ages),inputs$lifeExp$index)]
   

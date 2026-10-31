@@ -85,7 +85,7 @@ check_tp <- function(v) {
 
 # One value in a small table ───────────────────────────────────────────────────
 value_tables <- list(
-  lifeTab   = list(col = "p.death", what = "Probability of death in a year, general population", lo = 0, hi = 1),
+  lifeTab   = list(col = "p.death", what = "Probability of death within the 5-year age group, general population", lo = 0, hi = 1),
   schizoTab = list(col = "p.death", what = "Extra probability of death in a year with schizophrenia", lo = 0, hi = 1),
   lifeExp   = list(col = "yrs", what = "Remaining life expectancy, years", lo = 0, hi = Inf),
   cpi       = list(col = "Value", what = "Consumer price index", lo = 0, hi = Inf)

@@ -114,10 +114,11 @@ inputs_panel <- nav_panel(
               reactableOutput("tbl_tps")),
     nav_panel("Mortality and life expectancy", value = "mort",
               p(class = "tab-intro",
-                "Age-specific death rates for Uganda, the extra risk of death with schizophrenia, and the life expectancy used ",
-                "to count years of life lost. Select a row to edit it."),
+                "The WHO life table for Uganda gives the risk of dying within each 5-year age group; the model converts it ",
+                "to a yearly risk. The extra yearly risk of death with schizophrenia is added to it, and the life expectancy ",
+                "counts the years of life lost at each death. Select a row to edit it."),
               layout_columns(col_widths = c(4, 4, 4),
-                             card(card_header(h3("General population, yearly risk of death")), reactableOutput("tbl_lifeTab")),
+                             card(card_header(h3("General population, risk of death within each 5-year age group")), reactableOutput("tbl_lifeTab")),
                              card(card_header(h3("Extra yearly risk with schizophrenia")), reactableOutput("tbl_schizoTab")),
                              card(card_header(h3("Remaining life expectancy (years)")), reactableOutput("tbl_lifeExp")))),
     nav_panel("Price index", value = "cpi",
@@ -234,11 +235,15 @@ about_panel <- nav_panel(
                    tags$td(class = "num", "+$9 to +$12; quetiapine −$276")),
            tags$tr(tags$td(tags$strong("Benzhexol for outpatients")),
                    tags$td("Outpatients with extrapyramidal symptoms were costed for a 60-day inpatient supply"),
-                   tags$td("Costed for the duration of the symptoms (0.25 years)"), tags$td(class = "num", "+$0.4 to +$0.5"))))),
+                   tags$td("Costed for the duration of the symptoms (0.25 years)"), tags$td(class = "num", "+$0.4 to +$0.5")),
+           tags$tr(tags$td(tags$strong("Background mortality")),
+                   tags$td("The WHO life table's probabilities of dying within each 5-year age group were used as yearly probabilities, so people died about five times too fast: life expectancy from age 25 was 16.7 years, against 39 in the same table"),
+                   tags$td("Converted to yearly probabilities. Life expectancy from age 25 is 33.3 years, including the extra mortality from schizophrenia"),
+                   tags$td(class = "num", "+$2,619 to +$2,657; 5.5 fewer DALYs"))))),
        card_footer("Inpatient drug costs also follow the length of stay, as in the Excel model; this only matters in the sensitivity analyses.")),
   card(class = "mt-3",
        card_header(h2("Published results and this version"),
-                   p(class = "card-sub", "Cost per patient in 2012 US$; DALYs are the same in both versions")),
+                   p(class = "card-sub", "Per patient; costs in 2012 US$")),
        card_body(uiOutput("compare_table")))
 )
 
@@ -806,19 +811,24 @@ server <- function(input, output, session) {
   # ── About: published results and this version ──────────────────────────────
   output$compare_table <- renderUI({
     excel <- c(Chlorpromazine = 4617, Haloperidol = 4440, Quetiapine = 4943, Risperidone = 4424, Olanzapine = 4454)
+    excel_d <- c(Chlorpromazine = 27.608, Haloperidol = 27.563, Quetiapine = 27.562, Risperidone = 27.557, Olanzapine = 27.552)
     pub <- setNames(published_model$ce_result$costs, published_model$ce_result$intervention)
     pubd <- setNames(published_model$ce_result$outcomes, published_model$ce_result$intervention)
     m <- model()
-    live <- if (!inherits(m, "error") && n_ed() > 0) setNames(m$ce_result$costs, m$ce_result$intervention) else NULL
+    live_ok <- !inherits(m, "error") && n_ed() > 0
+    live <- if (live_ok) setNames(m$ce_result$costs, m$ce_result$intervention) else NULL
+    lived <- if (live_ok) setNames(m$ce_result$outcomes, m$ce_result$intervention) else NULL
     tags$table(class = "diff-table",
-      tags$thead(tags$tr(tags$th("Drug"), tags$th(class = "num", "Excel model (paper)"),
-                         tags$th(class = "num", "This version"),
-                         if (!is.null(live)) tags$th(class = "num", "With your edited inputs"),
-                         tags$th(class = "num", "DALYs"))),
+      tags$thead(tags$tr(tags$th("Drug"),
+                         tags$th(class = "num", "Cost, paper"), tags$th(class = "num", "Cost, this version"),
+                         if (live_ok) tags$th(class = "num", "Cost, your inputs"),
+                         tags$th(class = "num", "DALYs, paper"), tags$th(class = "num", "DALYs, this version"),
+                         if (live_ok) tags$th(class = "num", "DALYs, your inputs"))),
       tags$tbody(lapply(drug_order, function(d) tags$tr(
         tags$td(drug_tag(d)), tags$td(class = "num", fmt_usd(excel[[d]])), tags$td(class = "num", fmt_usd(pub[[d]])),
-        if (!is.null(live)) tags$td(class = "num", fmt_usd(live[[d]])),
-        tags$td(class = "num", fmt_num(pubd[[d]], 3))))))
+        if (live_ok) tags$td(class = "num", fmt_usd(live[[d]])),
+        tags$td(class = "num", fmt_num(excel_d[[d]], 3)), tags$td(class = "num", fmt_num(pubd[[d]], 3)),
+        if (live_ok) tags$td(class = "num", fmt_num(lived[[d]], 3))))))
   })
 }
 
