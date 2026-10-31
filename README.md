@@ -91,3 +91,7 @@ rsconnect::deployApp(appName = "schizo-model")
 ```
 
 `.rscignore` leaves the Excel model out of the deployed bundle. The app uses the Atkinson Hyperlegible Next and Mono fonts (SIL Open Font License, `www/fonts/OFL.txt`), bundled so they work offline.
+
+## Licence
+
+The code is released under the MIT License (see `LICENSE`). The bundled fonts are under the SIL Open Font License (see `www/fonts/OFL.txt`). The published article is not covered by this licence.
