@@ -131,7 +131,8 @@ mtrace <- function(primary, secondary, pRemit, p) {
     #            cost.trace = cost.trace, cost.vector = cost.vec, tot.costs = costs, Costs = sum(costs)))
 
     # return objects we can work with
-    list(DALYS = sum(DALYS), Costs = sum(costs))
+    # trace: proportion of the cohort in each state in each cycle
+    list(DALYS = sum(DALYS), Costs = sum(costs), trace = pop.trace)
   })
 }
 
@@ -231,7 +232,8 @@ RunModel <- function(inputs,
               baseparms = baseparms, 
               basetransitions = basetransitions, 
               DALYs = DALYs,
-              inputs = inputs))
+              inputs = inputs,
+              traces = setNames(lapply(traces, `[[`, "trace"), inputs$interventions)))
   
 }
 

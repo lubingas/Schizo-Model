@@ -18,6 +18,7 @@ It is a 10-state Markov cohort model with 70 annual cycles. Outcomes are costs (
 | `R/data_input.R` | Reads the inputs and model settings into one list |
 | `R/00_packages.R` | Loads the packages the model uses |
 | `main.R` | Runs the base case, one-way analysis (tornado), PSA and acceptability curves |
+| `app.R`, `app/`, `www/` | The interactive Shiny app: page layout and server (`app.R`), helpers, charts and input editors (`app/`), styles, font and icon (`www/`) |
 
 ## Changes since the 2015 publication
 
@@ -62,3 +63,28 @@ psa_res <- RunPSA(base_case, nsims = 1000)
 ```
 
 The result of `RunModel()` carries its inputs, so `owsa()` and `RunPSA()` only need the model object.
+
+## The app
+
+The Shiny app runs the same model. You can:
+
+- edit any input: parameters and their distributions, transition probabilities, mortality and life-expectancy tables, the price index, the time horizon and the willingness-to-pay threshold, then download your inputs as a spreadsheet and upload them again later;
+- see the base case, with the efficiency frontier on a cost-effectiveness plane;
+- run the one-way analysis for any pair of drugs, as a tornado diagram;
+- run the probabilistic analysis, with acceptability curves for all five drugs and a cost-effectiveness plane for each drug against a comparator;
+- read how this version differs from the published model.
+
+To run it locally, install the packages the model uses (listed in `R/00_packages.R`) plus the app's own:
+
+```r
+install.packages(c("shiny", "bslib", "reactable", "writexl"))
+shiny::runApp()
+```
+
+Shiny loads the files in `R/` automatically before `app.R`. To deploy it to shinyapps.io from this folder:
+
+```r
+rsconnect::deployApp(appName = "schizo-model")
+```
+
+`.rscignore` leaves the Excel model out of the deployed bundle. The app uses the Atkinson Hyperlegible Next and Mono fonts (SIL Open Font License, `www/fonts/OFL.txt`), bundled so they work offline.
