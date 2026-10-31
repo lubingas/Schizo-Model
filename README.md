@@ -20,17 +20,26 @@ It is a 10-state Markov cohort model with 70 annual cycles. Outcomes are costs (
 
 ## Changes since the 2015 publication
 
-The R version reproduces the Excel model's structure, with these corrections. Results therefore differ from the published paper.
+The published results came from the Excel model, which is kept in this repository unchanged. The R version reproduces its structure, with the corrections below, so its results differ from the paper.
 
-| Change | Before | After | Effect on base-case costs |
+| Change | Excel model (2015) | R model | Effect on base-case costs |
 |---|---|---|---|
-| **Laboratory-cost inflation** | Lab costs were inflated with a mistyped 2012 CPI (196.64 instead of 196.46) | CPI adjustments are read from the CPI sheet of `data_input.xlsx` (except Artane, below) | About −$0.65 per patient |
+| **Cost of acute (hospitalised) states** | The four acute-state cost cells multiplied by the YLD columns (state occupancy × disability weight) instead of the state occupancy, so hospital costs were scaled down by the disability weight (about 0.77) | Costs are multiplied by state occupancy | About +$310 to +$415 per patient |
+| **Laboratory-cost inflation** | Lab costs were inflated with a mistyped 2012 CPI (196.64 instead of 196.46) | All CPI adjustments are read from the CPI sheet of `data_input.xlsx` | About −$0.65 per patient |
 | **HIV test in inpatient lab costs** | The HIV-test frequency multiplied the VDRL term, so the HIV test was never costed | HIV test cost × frequency is added as its own term | About +$50 to +$68 per patient |
-| **Cost-effectiveness frontier** | Options were walked in order of effectiveness, and dominated options could stay on the frontier | Standard method: remove strongly dominated options, then extendedly dominated ones, then compute ICERs along the frontier | Changes which options are reported as cost-effective |
+| **Artane (benzhexol) price year** | Inflated with an index of 145.14, which is not in the CPI table | Inflated from 2010, the year used for chlorpromazine, whose price the Excel model also inflates from 2010 | Under $0.05 per patient |
 
-With these changes, olanzapine has the lowest cost and the fewest DALYs in the base case, so it dominates the other four drugs. Its cost advantage over risperidone is about $1 per patient, so the probabilistic analysis matters more than the point estimate.
+Base-case results, cost per patient (2012 US$):
 
-One open item: the Artane (benzhexol) price is inflated with an index of 145.14, which is not in the CPI table (2009 = 144.24, 2010 = 149.97). It is kept as in the Excel model until the source year is confirmed.
+| Drug | Excel model (2015) | R model | DALYs |
+|---|---|---|---|
+| Chlorpromazine | $4,617 | $5,100 | 27.608 |
+| Haloperidol | $4,440 | $4,838 | 27.563 |
+| Quetiapine | $4,943 | $5,344 | 27.562 |
+| Risperidone | $4,424 | $4,814 | 27.557 |
+| Olanzapine | $4,454 | $4,813 | 27.552 |
+
+In the Excel model, olanzapine cost $5,868 per DALY averted compared with risperidone. In the R model, olanzapine has the lowest cost and the fewest DALYs, so it dominates the other four drugs. Its cost advantage over risperidone is about $1 per patient, so the probabilistic analysis matters more than the point estimate.
 
 ## Running it
 

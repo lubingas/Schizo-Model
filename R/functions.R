@@ -135,8 +135,7 @@ mtrace <- function(primary = numeric(),
   c.res.2nd <- op.drug.costs(secondary[8], secondary[9]) + eps.risk(pEPSPLA,secondary[6]) * ip.drug.costs(artane_cost, artane_qty) + diab.risk(pDiabetesHAL,secondary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
   c.res.3rd <- fluphenazine_cost * fluphenazine_qty * 12 + eps.risk(pEPSPLA,epsFLU) * ip.drug.costs(artane_cost, artane_qty) + pDiabetesFLU * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
   c.res.off.1st <- c.res.off.2nd <- 0
-  # Artane price index 145.14 is not in the CPI sheet (2009 = 144.24); kept as in the 2015 Excel model until the source year is confirmed
-  c.ac.off.1st <- c.ac.off.2nd <- c.ac.was.on.1st <- c.ac.was.on.2nd <- ip.drug.costs(chlorpromazine_cost, chlorpromazine_qty)*cpi_ratio(2010) + eps.risk(pEPSPLA,epsCPZ) * ip.drug.costs(artane_cost, artane_qty)*(196.46/145.14) + diab.risk(pDiabetesHAL,diabCPZ) * cDiabetes + ip.personnel.costs + ip.lab.costs + ip.capital.costs + ip.carer.travel.costs + ip.patient.travel.costs + ip.indirect + carer.indirect
+  c.ac.off.1st <- c.ac.off.2nd <- c.ac.was.on.1st <- c.ac.was.on.2nd <- ip.drug.costs(chlorpromazine_cost, chlorpromazine_qty)*cpi_ratio(2010) + eps.risk(pEPSPLA,epsCPZ) * ip.drug.costs(artane_cost, artane_qty)*cpi_ratio(2010) + diab.risk(pDiabetesHAL,diabCPZ) * cDiabetes + ip.personnel.costs + ip.lab.costs + ip.capital.costs + ip.carer.travel.costs + ip.patient.travel.costs + ip.indirect + carer.indirect
   
   cost.trace <- cbind(pop.trace[,1] * c.res.1st, pop.trace[,2] * c.res.2nd, pop.trace[,3] * c.res.3rd, pop.trace[,4] * c.res.off.1st, pop.trace[,5] * c.res.off.2nd, pop.trace[,6] * c.ac.off.1st, pop.trace[,7] * c.ac.off.2nd, pop.trace[,8] * c.ac.was.on.1st, pop.trace[,9] * c.ac.was.on.2nd)
   
