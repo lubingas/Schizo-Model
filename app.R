@@ -702,7 +702,6 @@ server <- function(input, output, session) {
     ow_state(list(res = res, info = info, inputs = inp, drug = drug, comp = comp, outcome = outcome))
   }
   observeEvent(input$ow_run, run_owsa())
-  observeEvent(input$nav, { if (input$nav == "oneway" && is.null(ow_state())) run_owsa() })
 
   output$ow_stale <- renderUI({
     s <- ow_state(); if (is.null(s)) return(NULL)
@@ -755,7 +754,6 @@ server <- function(input, output, session) {
     psa_state(list(res = res, inputs = rv$inputs, n = round(n), seed = seed))
   }
   observeEvent(input$psa_run, run_psa())
-  observeEvent(input$nav, { if (input$nav == "psa" && is.null(psa_state())) run_psa() })
 
   output$psa_stale <- renderUI({
     s <- psa_state(); if (is.null(s)) return(NULL)
