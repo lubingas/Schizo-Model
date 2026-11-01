@@ -10,6 +10,12 @@ This is the model behind:
 
 It is a 10-state Markov cohort model with 70 annual cycles. Outcomes are costs (2012 US$) and disability-adjusted life years (DALYs) per patient.
 
+## Model structure
+
+![Structure of the Markov model: residual phase, stopped and relapse states for the first- and second-line drugs, the third-line drug, and death](www/model_structure.svg)
+
+Each year people stay in their state or move along one arrow. Everyone starts in the residual phase on their first-line drug. Side effects or poor response move people to the next drug, as does remission after a relapse on treatment; remission after a relapse off treatment restarts the same drug. The third-line drug is fluphenazine decanoate. The relapse states are spent in hospital.
+
 ## Contents
 
 | Path | What it is |
@@ -20,7 +26,7 @@ It is a 10-state Markov cohort model with 70 annual cycles. Outcomes are costs (
 | `R/data_input.R` | Reads the inputs and model settings into one list |
 | `R/00_packages.R` | Loads the packages the model uses |
 | `main.R` | Runs the base case, one-way analysis (tornado), PSA and acceptability curves |
-| `app.R`, `app/`, `www/` | The interactive Shiny app: page layout and server (`app.R`), helpers, charts and input editors (`app/`), styles, font and icon (`www/`) |
+| `app.R`, `app/`, `www/` | The interactive Shiny app: page layout and server (`app.R`), helpers, charts and input editors (`app/`), styles, font, icon and the model structure figure (`www/`) |
 
 ## Changes since the 2015 publication
 

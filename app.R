@@ -209,6 +209,13 @@ about_panel <- nav_panel(
                        "doi:10.1007/s40258-015-0176-3"))),
           p(style = "margin-top: 1rem;", "The model code, its inputs and the original Excel model are on ",
             tags$a(href = "https://github.com/lubingas/Schizo-Model", target = "_blank", rel = "noopener", "GitHub", .noWS = "outside"), "."))),
+  div(class = "mt-4",
+      h2("Model structure"),
+      div(class = "diagram-wrap",
+          HTML(paste(readLines("www/model_structure.svg", warn = FALSE), collapse = "\n")),   # same file as in the README
+          p(class = "diagram-caption",
+            "Each year people stay in their state or move along one arrow. Everyone starts in the residual phase on their ",
+            "first-line drug. The Overview tab shows how many years people spend in each state."))),
   card(class = "mt-4",
        card_header(h2("How this version differs from the published model"),
                    p(class = "card-sub", "The published results came from the Excel model. This app runs an R version with these corrections.")),

@@ -162,6 +162,7 @@ a:hover { color: #104281; }
 .diagram-wrap { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-lg); padding: 1rem 1rem 0.5rem; overflow-x: auto; }
 .diagram-wrap svg { display: block; width: 100%; min-width: 760px; height: auto; }
 .diagram-caption { font-size: 0.86rem; color: var(--ink-2); margin: 0.6rem 0.25rem 0.4rem; max-width: none; }
+.diagram-wrap .s-bg { fill: transparent; }   /* the structure figure's white background is for the README only */
 
 .citation { border-left: 3px solid var(--hairline-strong); padding: 0.2rem 0 0.2rem 1rem; margin: 0; }
 .citation p { margin: 0; }
