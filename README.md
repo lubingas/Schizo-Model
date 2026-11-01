@@ -14,7 +14,7 @@ It is a 10-state Markov cohort model with 70 annual cycles. Outcomes are costs (
 
 ![Structure of the Markov model: residual phase, stopped and relapse states for the first- and second-line drugs, the third-line drug, and death](www/model_structure.svg)
 
-Each year people stay in their state or move along one arrow. Everyone starts in the residual phase on their first-line drug. Side effects or poor response move people to the next drug, as does remission after a relapse on treatment; remission after a relapse off treatment restarts the same drug. The third-line drug is fluphenazine decanoate. The relapse states are spent in hospital.
+Each year people stay in their state (the loops) or move along one arrow. Everyone starts in the residual phase on their first-line drug. Side effects or lack of efficacy move people to the next drug, as does remission after a relapse on treatment; remission after a relapse off treatment restarts the same drug. The third-line drug is fluphenazine decanoate. The relapse states are spent in hospital.
 
 ## Contents
 

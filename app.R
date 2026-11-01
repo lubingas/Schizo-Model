@@ -214,7 +214,7 @@ about_panel <- nav_panel(
       div(class = "diagram-wrap",
           HTML(paste(readLines("www/model_structure.svg", warn = FALSE), collapse = "\n")),   # same file as in the README
           p(class = "diagram-caption",
-            "Each year people stay in their state or move along one arrow. Everyone starts in the residual phase on their ",
+            "Each year people stay in their state (the loops) or move along one arrow. Everyone starts in the residual phase on their ",
             "first-line drug. The Overview tab shows how many years people spend in each state."))),
   card(class = "mt-4",
        card_header(h2("How this version differs from the published model"),
