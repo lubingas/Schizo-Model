@@ -139,7 +139,7 @@ inputs_panel <- nav_panel(
                                             min = 0, step = 100, width = "260px"),
                                p(class = "small-print",
                                  "The default is three times Uganda's 2012 GDP per capita (US$547), the World Health Organization's ",
-                                 "upper threshold at the time. It sets the headline, the net benefit column and the marked point on the curves."))))))
+                                 "upper threshold at the time. It sets the headline, the net benefit column, the net benefit in the one-way analysis and the marked point on the curves."))))))
 )
 
 base_panel <- nav_panel(
@@ -165,13 +165,17 @@ oneway_panel <- nav_panel(
         selectInput("ow_drug", "Drug", choices = drug_order, selected = "Olanzapine", width = "180px"),
         selectInput("ow_comp", "Compared with", choices = drug_order, selected = "Risperidone", width = "180px"),
         selectInput("ow_outcome", "Result", width = "220px",
-                    choices = c("Incremental cost" = "cost", "DALYs averted" = "outcome", "Cost per DALY averted" = "ICER")),
+                    choices = c("Incremental cost" = "cost", "DALYs averted" = "outcome", "Cost per DALY averted" = "ICER",
+                                "Net monetary benefit" = "NMB")),
         div(class = "ctl-wide", sliderInput("ow_n", "Inputs shown", min = 5, max = 40, value = 15, step = 1, width = "220px")),
         actionButton("ow_run", "Run the one-way analysis", class = "btn-primary")),
     p(class = "small-print", style = "margin: 0.8rem 0 0;",
       "Each input moves to its low and then its high value while every other input stays at its base case. ",
       "Each transition probability moves between the 2.5% and 97.5% points of its distribution from the trial counts, ",
       "and that drug's other transition probabilities are rescaled so they still add up to 1. ",
+      "Net monetary benefit values each DALY averted at the willingness-to-pay threshold in the model settings and subtracts the extra cost. ",
+      "A cost per DALY averted only ranks runs where the drug costs more and averts more; runs where it becomes dominant, ",
+      "dominated, or cheaper but less effective are marked at the edges of the chart instead. ",
       "After a run, change the drugs or the result to see them straight away."))),
   uiOutput("ow_stale"),
   card(card_header(uiOutput("ow_title")), card_body(uiOutput("ow_body")))
@@ -719,7 +723,7 @@ server <- function(input, output, session) {
   ow_pair <- reactive({
     s <- ow_state(); req(s)
     validate(need(input$ow_drug != input$ow_comp, "Choose two different drugs."))
-    owsaPair(s$res, input$ow_outcome, input$ow_drug, input$ow_comp)
+    owsaPair(s$res, input$ow_outcome, input$ow_drug, input$ow_comp, wtp = wtp())
   })
 
   output$ow_stale <- renderUI({
@@ -729,16 +733,30 @@ server <- function(input, output, session) {
   output$ow_title <- renderUI({
     s <- ow_state(); if (is.null(s) || input$ow_drug == input$ow_comp) return(h2("One-way sensitivity analysis"))
     ow <- ow_pair()
-    what <- switch(input$ow_outcome, cost = "incremental cost", outcome = "DALYs averted", ICER = "cost per DALY averted")
+    what <- switch(input$ow_outcome, cost = "incremental cost", outcome = "DALYs averted", ICER = "cost per DALY averted",
+                   NMB = sprintf("net monetary benefit (at %s per DALY averted)", fmt_usd(wtp())))
+    sub <- if (input$ow_outcome == "ICER" && !is.na(ow$owsa_basestatus)) {
+      "At the base case there is no cost per DALY averted to vary; see below."
+    } else {
+      sprintf("The %s inputs with the largest effect, out of %s. The vertical line is the base case: %s.",
+              min(input$ow_n, nrow(ow$owsa_data)), nrow(ow$owsa_data), owsa_value_fmt(input$ow_outcome)(ow$owsa_basecase))
+    }
     tagList(h2(sprintf("What moves the %s of %s compared with %s", what, tolower(input$ow_drug), tolower(input$ow_comp))),
-            p(class = "card-sub", sprintf("The %s inputs with the largest effect, out of %s. The vertical line is the base case: %s.",
-                                          min(input$ow_n, nrow(ow$owsa_data)), nrow(ow$owsa_data),
-                                          owsa_value_fmt(input$ow_outcome)(ow$owsa_basecase))))
+            p(class = "card-sub", sub))
   })
   output$ow_body <- renderUI({
     s <- ow_state()
     if (is.null(s)) return(div(class = "empty-state", p("Run the one-way analysis to see which inputs move the result most.")))
     if (input$ow_drug == input$ow_comp) return(div(class = "empty-state", p("Choose two different drugs.")))
+    ow <- ow_pair()
+    if (input$ow_outcome == "ICER" && !is.na(ow$owsa_basestatus)) {
+      drug <- tolower(input$ow_drug); comp <- tolower(input$ow_comp)
+      msg <- switch(ow$owsa_basestatus,
+                    dominant = sprintf("At the base case %s costs less than %s and averts at least as many DALYs, so it is dominant and there is no cost per DALY averted.", drug, comp),
+                    dominated = sprintf("At the base case %s costs more than %s and averts no more DALYs, so it is dominated and there is no cost per DALY averted.", drug, comp),
+                    sprintf("At the base case %s costs less than %s but averts fewer DALYs. Swap the two drugs to see the cost per DALY averted of %s compared with %s.", drug, comp, comp, drug))
+      return(div(class = "empty-state", p(msg), p("Net monetary benefit, incremental cost or DALYs averted show what moves this comparison.")))
+    }
     n <- min(input$ow_n, length(s$res$variable))
     tagList(plotlyOutput("tornado", height = paste0(105 + 28 * n, "px")),
             tags$details(style = "margin-top: 0.8rem;", tags$summary("Show as a table"), reactableOutput("ow_table")))
@@ -752,8 +770,9 @@ server <- function(input, output, session) {
     s <- ow_state(); req(s)
     d <- tornado_data(ow_pair(), s$info, input$ow_n); d <- d[rev(seq_len(nrow(d))), ]
     f <- owsa_value_fmt(input$ow_outcome)
-    reactable(data.frame(Input = d$label, `Low input` = d$low_in, `Result at low` = f(d$low),
-                         `High input` = d$high_in, `Result at high` = f(d$high), check.names = FALSE),
+    res <- function(x, st) ifelse(is.na(st), f(x), owsa_status_text[st])   # a status where there is no ratio
+    reactable(data.frame(Input = d$label, `Low input` = d$low_in, `Result at low` = res(d$low, d$low_status),
+                         `High input` = d$high_in, `Result at high` = res(d$high, d$high_status), check.names = FALSE),
               theme = rt_theme, pagination = FALSE, compact = TRUE, sortable = FALSE,
               columns = list(Input = colDef(minWidth = 280)),
               defaultColDef = colDef(align = "right", class = "num", minWidth = 110))
@@ -768,9 +787,9 @@ server <- function(input, output, session) {
     if (is.na(n) || n < 100 || n > 10000) return(showNotification("Choose between 100 and 10,000 draws.", type = "warning"))
     if (is.na(seed)) seed <- 1234
     set.seed(seed)
-    old <- pbapply::pboptions(type = "shiny", title = "Running the probabilistic analysis", label = "Drawing inputs and running the model")
-    on.exit(pbapply::pboptions(old), add = TRUE)
-    res <- tryCatch(RunPSA(m, nsims = round(n)), error = function(e) e)
+    res <- tryCatch(withProgressShiny(message = "Running the probabilistic analysis", detail = "Starting …", value = 0,
+                                      RunPSA(m, nsims = round(n))),
+                    error = function(e) e)
     if (inherits(res, "error")) return(showNotification(paste("The probabilistic analysis stopped:", conditionMessage(res)), type = "error", duration = 10))
     psa_state(list(res = res, inputs = rv$inputs, n = round(n), seed = seed))
   }

@@ -49,7 +49,7 @@ TornadoPlot(owsa_list = dsa_pair, max_vars = 30)
 nsims <- 1000
 
 # run PSA (draws from the model's own parameter and transition tables)
-psa_res <- RunPSA(model = base_case, nsims = nsims)
+psa_res <- with_progress(RunPSA(model = base_case, nsims = nsims))
 
 psa_res$costs    # nsims × n_interventions
 psa_res$outcomes # nsims × n_interventions

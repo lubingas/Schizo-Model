@@ -445,35 +445,66 @@ owsa <- function(model,
 ## function to pick one result of the one-way analysis: intervention versus comparator
 ## INSTRUCTIONS
 # 1) owsa_res: output of owsa()
-# 2) outcome: "cost" (incremental cost), "outcome" (DALYs averted / QALYs gained) or "ICER"
+# 2) outcome: "cost" (incremental cost), "outcome" (DALYs averted / QALYs gained), "ICER",
+#    or "NMB" (incremental net monetary benefit: outcome valued at wtp, minus incremental cost)
 # 3) intervention, comparator: two of the drugs
+# 4) wtp: willingness to pay per DALY averted / QALY gained; needed for "NMB"
 # returns the table TornadoPlot() uses; no model runs, so it is instant
-owsaPair <- function(owsa_res, outcome, intervention, comparator) {
+owsaPair <- function(owsa_res, outcome, intervention, comparator, wtp = NULL) {
   
-  # Result of interest: `intervention` versus `comparator` --
-  # incremental cost ("cost"), DALYs averted / QALYs gained ("outcome") or ICER ("ICER");
+  stopifnot(outcome %in% c("cost", "outcome", "ICER", "NMB"), outcome != "NMB" || is.numeric(wtp))
+  
+  # Result of interest: `intervention` versus `comparator`;
   # costs and outcomes are matrices with a row per run and a column per drug
   pairwise <- function(costs, outcomes) {
     dc <- costs[, intervention] - costs[, comparator]
     do <- if (owsa_res$DALYs) outcomes[, comparator] - outcomes[, intervention]
           else outcomes[, intervention] - outcomes[, comparator]
-    unname(switch(outcome, ICER = dc / do, cost = dc, outcome = do))
+    value <- unname(switch(outcome, ICER = dc / do, cost = dc, outcome = do, NMB = wtp * do - dc))
+    # an ICER is a cost per unit of health only when the intervention costs more and gains more;
+    # in any other quadrant the ratio can't be ranked, so say which quadrant instead
+    status <- rep(NA_character_, length(value))
+    if (outcome == "ICER") {
+      status <- unname(ifelse(dc > 0 & do > 0, NA,
+                       ifelse(dc <= 0 & do >= 0, "dominant",
+                       ifelse(dc >= 0 & do <= 0, "dominated", "cheaper, less effective"))))
+    }
+    list(value = value, status = status)
   }
   
   base.case <- pairwise(rbind(owsa_res$costs_base), rbind(owsa_res$outcomes_base))
-  low <- pairwise(owsa_res$costs_low, owsa_res$outcomes_low)
-  high <- pairwise(owsa_res$costs_high, owsa_res$outcomes_high)
+  low.run <- pairwise(owsa_res$costs_low, owsa_res$outcomes_low)
+  high.run <- pairwise(owsa_res$costs_high, owsa_res$outcomes_high)
   
   owsavars <- paste0(owsa_res$variable, " (", sprintf(owsa_res$low_in, fmt = "%#.2f"), ", ",
                      sprintf(owsa_res$high_in, fmt = "%#.2f"), ")")
   
-  # post processing of data to return full results
-  owsa_tab <- tibble(variable = owsavars, low = low, high = high) %>%
-    mutate(range = abs(high - low), high_val = high - base.case, low_val = low - base.case) %>%
-    arrange(range)
+  # post processing of data to return full results; for the ICER, runs that leave the
+  # cost-more-gain-more quadrant have no ratio (NA) and sort above the rest, since they change the conclusion
+  owsa_tab <- tibble(variable = owsavars,
+                     low = ifelse(is.na(low.run$status), low.run$value, NA),
+                     high = ifelse(is.na(high.run$status), high.run$value, NA),
+                     low_status = low.run$status, high_status = high.run$status) %>%
+    mutate(high_val = high - base.case$value, low_val = low - base.case$value,
+           range = coalesce(abs(high - low), abs(low_val), abs(high_val), 0),
+           no_ratio = (!is.na(low_status)) + (!is.na(high_status))) %>%
+    arrange(no_ratio, range)
   
-  return(list(owsa_data = owsa_tab, owsa_outcome = outcome, owsa_basecase = base.case, DALYs = owsa_res$DALYs))
+  return(list(owsa_data = owsa_tab, owsa_outcome = outcome, owsa_basecase = base.case$value,
+              owsa_basestatus = base.case$status, wtp = wtp, DALYs = owsa_res$DALYs))
   
+}
+
+## function to say, for each row of a tornado, which runs ended up in the given quadrants (ICER only)
+## e.g. "low: dominant", "high: dominated", "low and high: dominant"; NA when neither did
+tornadoLabels <- function(owsa_tab, statuses) {
+  lo <- ifelse(owsa_tab$low_status %in% statuses, owsa_tab$low_status, NA)
+  hi <- ifelse(owsa_tab$high_status %in% statuses, owsa_tab$high_status, NA)
+  case_when(!is.na(lo) & !is.na(hi) & lo == hi ~ paste("low and high:", lo),
+            !is.na(lo) & !is.na(hi) ~ paste0("low: ", lo, "; high: ", hi),
+            !is.na(lo) ~ paste("low:", lo),
+            !is.na(hi) ~ paste("high:", hi),
+            TRUE ~ NA_character_)
 }
 
 # function takes output from DSA as a list, and plots the results (user inputs max vars)
@@ -485,33 +516,56 @@ TornadoPlot <- function(owsa_list, max_vars) {
   basecase <- owsa_list$owsa_basecase
   DALYs <- owsa_list$DALYs
   on_outcome <- ifelse(DALYs == TRUE, "DALYs averted", "QALYs gained")
+  if (outcome == "ICER" && !is.na(owsa_list$owsa_basestatus)) {
+    stop("At the base case the intervention is ", owsa_list$owsa_basestatus,
+         ", so there is no ICER to vary; use outcome = \"cost\", \"outcome\" or \"NMB\"")
+  }
   
   # set color
-  col <- brewer.pal(3,"Dark2")
+  col_low <- "rgb(166,206,227)"
+  col_high <- "rgb(31,120,180)"
   
-  # filter for those with perc impact on outcome
+  # owsa_tab comes sorted by effect, largest last; draw each row's longer bar first,
+  # so the shorter one stays visible when both fall on the same side of the base case
   owsa_torn <- owsa_tab %>%
-    slice_max(range, n = max_vars) %>%
-    arrange(range)
+    slice_tail(n = max_vars) %>%
+    mutate(low_behind = is.na(high_val) | (!is.na(low_val) & abs(low_val) >= abs(high_val)),
+           back = as.numeric(ifelse(low_behind, low_val, high_val)), front = as.numeric(ifelse(low_behind, high_val, low_val)),
+           back_col = ifelse(low_behind, col_low, col_high), front_col = ifelse(low_behind, col_high, col_low))
   
   axislabel <- switch(outcome,
                       ICER=paste0("Cost per ", on_outcome),
                       cost="Incremental Cost ($)",
-                      outcome=on_outcome)
+                      outcome=on_outcome,
+                      NMB=paste0("Net monetary benefit at $", format(owsa_list$wtp, big.mark = ","),
+                                 " per ", sub("s .*", "", on_outcome), " ($)"))
   
-  plot_ly(data = owsa_torn) %>%
-    add_trace(x = ~low_val, y = ~variable, 
-              base = basecase, 
-              type = 'bar', orientation = 'h', name = "lower input",
-              marker = list(color = "rgba(166,206,227,0.7)",
-                            line = list(color = "rgb(166,206,227)",
-                                        width = 2))) %>%
-    add_trace(x = ~high_val, y = ~variable, 
-              base = basecase, 
-              type = 'bar', orientation = 'h', name = "higher input",
-              marker = list(color = "rgba(31,120,180,0.7)",
-                            line = list(color = "rgb(31,120,180)",
-                                        width = 2))) %>%
+  # ICER only: runs with no ratio are named at the edges, dominant on the left, the rest on the right
+  xrange <- NULL; notes <- list()
+  if (outcome == "ICER") {
+    xr <- range(c(basecase, owsa_torn$low, owsa_torn$high), na.rm = TRUE)
+    pad <- 0.45 * max(diff(xr), abs(basecase))
+    xrange <- c(xr[1] - pad, xr[2] + pad)
+    left <- tornadoLabels(owsa_torn, "dominant")
+    right <- tornadoLabels(owsa_torn, c("dominated", "cheaper, less effective"))
+    for (i in seq_len(nrow(owsa_torn))) {
+      if (!is.na(left[i])) notes <- c(notes, list(list(x = xrange[1], y = owsa_torn$variable[i], text = left[i],
+                                                        xanchor = "left", showarrow = FALSE)))
+      if (!is.na(right[i])) notes <- c(notes, list(list(x = xrange[2], y = owsa_torn$variable[i], text = right[i],
+                                                         xanchor = "right", showarrow = FALSE)))
+    }
+  }
+  
+  plot_ly(data = owsa_torn, y = ~variable) %>%
+    add_trace(x = ~back, base = basecase, type = 'bar', orientation = 'h', showlegend = FALSE,
+              marker = list(color = ~back_col)) %>%
+    add_trace(x = ~front, base = basecase, type = 'bar', orientation = 'h', showlegend = FALSE,
+              marker = list(color = ~front_col)) %>%
+    # legend entries only (zero-length bars)
+    add_trace(x = 0, y = owsa_torn$variable[1], base = basecase, type = 'bar', orientation = 'h',
+              name = "lower input", marker = list(color = col_low), hoverinfo = "skip") %>%
+    add_trace(x = 0, y = owsa_torn$variable[1], base = basecase, type = 'bar', orientation = 'h',
+              name = "higher input", marker = list(color = col_high), hoverinfo = "skip") %>%
     layout(barmode='overlay') %>% 
     layout(yaxis = list(categoryorder = "array",
                         categoryarray = ~variable,
@@ -519,7 +573,10 @@ TornadoPlot <- function(owsa_list, max_vars) {
            xaxis = list(zeroline = FALSE,
                         showline = FALSE,
                         showgrid = FALSE,
+                        range = xrange,
                         title = axislabel),
+           annotations = notes,
+           legend = list(itemclick = FALSE, itemdoubleclick = FALSE),
            font = list(size=12, 
                        family='Fira Sans'))
   
@@ -530,7 +587,12 @@ TornadoPlot <- function(owsa_list, max_vars) {
 ## PSA utilities
 ## ----------------------------
 
-## process draws inside function for improved readability -- this function is only called once per analysis run 
+## function to draw every PSA input at once -- called once per analysis run
+## INSTRUCTIONS
+# 1) nsims: number of draws
+# 2) parameters, transitions: the input tables (dist, alpha, beta, sem and the base case, low and high columns)
+# 3) interventions: the drugs (kept for the call signature; the transition sets are found from the variable names)
+# returns a numeric matrix: a row per draw, a named column per parameter
 draw_psa_df <- function(nsims, parameters, transitions, interventions,
                         basecase = "basecase", low = "low", high = "high") {
   
@@ -548,63 +610,44 @@ draw_psa_df <- function(nsims, parameters, transitions, interventions,
   low_vals  <- getparms(parameters, value = low)
   high_vals <- getparms(parameters, value = high)
   
-  # ... then exactly the same code for Beta/Normal/Lognormal/Dirichlet draws ...
-  ## use tidyverse styling for readability
-  # --- Beta draws
-  beta_dt <- map_dfc(betaparms, ~{
-    tibble(!!.x := rbeta(nsims, alphas[.x], betas[.x]))
-  })
-  
-  # --- Normal draws
-  normal_dt <- map_dfc(normparms, ~{
-    tibble(!!.x := rnorm(nsims, mean = base_vals[.x], sd = sems[.x]))
-  })
-  
-  # --- Lognormal draws
-  logn_dt <- map_dfc(lognormparms, ~{
-    mu    <- log(base_vals[.x])
-    sigma <- (log(high_vals[.x]) - log(low_vals[.x])) / 3.92
-    tibble(!!.x := rlnorm(nsims, meanlog = mu, sdlog = sigma))
-  })
-  
-  # --- Dirichlet draws
-  dir_dt <- {
-    dir_rows <- transitions %>%
-      filter(dist == "dirichlet") %>%
-      pull(alpha, variable)
-    
-    randdirchinputs <- dir_rows %>%
-      split(., cut(seq_along(.),
-                   length(.)/length(interventions),
-                   labels = interventions))
-    
-    map(randdirchinputs, function(alpha) {
-      k <- length(alpha)
-      G <- matrix(rgamma(nsims * k, shape = rep(alpha, each = nsims)),
-                  nrow = nsims)
-      D <- G / rowSums(G)
-      colnames(D) <- names(alpha)
-      as_tibble(D)
-    }) %>% bind_cols()
+  # one column of nsims draws per parameter, in the order given
+  draw <- function(parms, f) {
+    matrix(vapply(parms, f, numeric(nsims)), nrow = nsims, dimnames = list(NULL, parms))
   }
   
-  # --- Fixed parameters
-  fixed_dt <- if (length(fixedparms) > 0) {
-    tibble(!!!map(set_names(fixedparms), ~ rep(base_vals[.x], nsims)))
-  } else tibble()
+  # --- Beta, Normal, Lognormal and fixed draws
+  beta_m   <- draw(betaparms, function(v) rbeta(nsims, alphas[[v]], betas[[v]]))
+  normal_m <- draw(normparms, function(v) rnorm(nsims, mean = base_vals[[v]], sd = sems[[v]]))
+  logn_m   <- draw(lognormparms, function(v) rlnorm(nsims, meanlog = log(base_vals[[v]]),
+                                                    sdlog = (log(high_vals[[v]]) - log(low_vals[[v]])) / 3.92))
+  fixed_m  <- draw(fixedparms, function(v) rep(base_vals[[v]], nsims))
+  
+  # --- Dirichlet draws: one set per drug (drug code at the end of the name), in table order
+  dir_alpha <- transitions %>% filter(dist == "dirichlet") %>% pull(alpha, variable)
+  drug <- stringr::str_extract(names(dir_alpha), "(CPZ|HAL|OLA|RIS|QUE)$")
+  dir_m <- do.call(cbind, lapply(split(dir_alpha, factor(drug, levels = unique(drug))), function(alpha) {
+    k <- length(alpha)
+    G <- matrix(rgamma(nsims * k, shape = rep(alpha, each = nsims)), nrow = nsims)
+    D <- G / rowSums(G)
+    colnames(D) <- names(alpha)
+    D
+  }))
   
   # --- Combine all blocks
-  return(bind_cols(beta_dt, normal_dt, logn_dt, dir_dt, fixed_dt))
+  return(cbind(beta_m, normal_m, logn_m, dir_m, fixed_m))
   
 }
 
-# this is a wrapper function that calls the RunModel function on psalist
-# use it to extract the PSA trace of costs and outcomes
+## function to run the model on one PSA draw
+## INSTRUCTIONS
+# 1) model: the base-case model object from RunModel()
+# 2) psalist: one draw, a named numeric vector of every parameter
 genPSA <- function(model, psalist) {
   
   # get things we need
   basenames <- names(model$baseparms)
   transitnames <- names(model$basetransitions)
+  stopifnot(all(c(basenames, transitnames) %in% names(psalist)))   # every parameter has a draw
   
   # costs and outcomes of every drug, named by drug
   res <- RunModel(model$inputs,
@@ -612,35 +655,39 @@ genPSA <- function(model, psalist) {
                   basetransitions = psalist[transitnames],
                   DALYs = model$DALYs, summary_only = TRUE)
 
-  return(list(costs = res$costs, outcomes = res$outcomes))
+  return(res)
   
 }
 
-# psa_res <- lapply(split(psa_input, 1:nrow(psa_input)), FUN = RunPSA, base_case = model) %>%
-#   pmap(., bind_rows)
-
-# parameters, transitions: the tables to draw from (by default, the model's own inputs)
+## function to run the probabilistic sensitivity analysis
+## INSTRUCTIONS
+# 1) model: the base-case model object from RunModel()
+# 2) nsims: number of draws
+# 3) parameters, transitions: the tables to draw from (by default, the model's own inputs)
+# progress is reported with progressr: wrap the call in with_progress() (console) or withProgressShiny() (app)
 RunPSA <- function(model, nsims,
                    parameters = model$inputs$parameters,
                    transitions = model$inputs$transitions) {
-  # --- 1. Precompute all draws once, outside of genPSA
-  psalist <- draw_psa_df(
-    nsims        = nsims,
-    parameters   = parameters,
-    transitions  = transitions,
-    interventions = model$inputs$interventions
-  )
   
-  # --- 2. Split rows into list of 1-row tibbles
-  rowlist <- split(psalist, seq_len(nrow(psalist)))
-  psaTraces <- pblapply(rowlist, function(x) genPSA(model, x))
+  # draw every input once, then split the draws into rows: each row is a named numeric vector of every parameter
+  psalist <- draw_psa_df(nsims = nsims, parameters = parameters, transitions = transitions,
+                         interventions = model$inputs$interventions)
+  draws <- asplit(psalist, MARGIN = 1)
   
-  # keep psalist intact and iterate by row index
-  # psaTraces <- pblapply(seq_len(nrow(psalist)), function(i) genPSA(model, psalist[i, ]))
+  # update the progress bar 100 times, not once per draw
+  every <- ceiling(length(draws) / 100)
+  p <- progressr::progressor(steps = ceiling(length(draws) / every))
   
-  # --- 4. Extract and bind results
-  costs    <- purrr::map_dfr(psaTraces, "costs")
-  outcomes <- purrr::map_dfr(psaTraces, "outcomes")
+  results <- lapply(seq_along(draws), function(i) {
+    if (i %% every == 0 || i == length(draws)) {
+      p(message = paste0("PSA iteration ", i, " of ", length(draws)))
+    }
+    genPSA(model = model, psalist = draws[[i]])
+  })
+  
+  # one table per result: a row per draw, a column per drug
+  costs    <- as_tibble(do.call(rbind, unname(lapply(results, `[[`, "costs"))))
+  outcomes <- as_tibble(do.call(rbind, unname(lapply(results, `[[`, "outcomes"))))
   
   return(list(costs = costs, outcomes = outcomes))
 }

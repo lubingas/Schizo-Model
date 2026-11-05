@@ -80,7 +80,7 @@ The Shiny app runs the same model. You can:
 
 - edit any input: parameters and their distributions, transition probabilities, mortality and life-expectancy tables, the price index, the time horizon and the willingness-to-pay threshold, then download your inputs as a spreadsheet and upload them again later;
 - see the base case, with the efficiency frontier on a cost-effectiveness plane;
-- run the one-way analysis for any pair of drugs, as a tornado diagram;
+- run the one-way analysis for any pair of drugs, as a tornado diagram of the incremental cost, DALYs averted, cost per DALY averted or net monetary benefit;
 - run the probabilistic analysis, with acceptability curves for all five drugs and a cost-effectiveness plane for each drug against a comparator;
 - read how this version differs from the published model.
 

@@ -2,7 +2,7 @@
 # ---------------------------
 # Packages used by the model. Install any that are missing first:
 # install.packages(c("dplyr", "tibble", "purrr", "stringr", "readxl",
-#                    "plotly", "RColorBrewer", "pbapply", "here"))
+#                    "plotly", "RColorBrewer", "progressr", "here"))
 # ---------------------------
 
 suppressPackageStartupMessages({
@@ -13,5 +13,5 @@ suppressPackageStartupMessages({
   library(readxl)
   library(plotly)
   library(RColorBrewer)
-  library(pbapply)
+  library(progressr)
 })
