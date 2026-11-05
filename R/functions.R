@@ -723,18 +723,13 @@ RunCEAC <- function(psa_output, wtp, by, DALYs = TRUE) {
 
   wtps <- seq(0, wtp, by = by)
   
-  # # probability of cost effectiveness calculations
-  # probCE <- map_dfr(wtps, .f = genProbCE, psa_output) %>%
-  #   # bind_rows() %>%
-  #   bind_cols(WTP = wtps, .)
+  # convert the draws to matrices once, not once per willingness-to-pay value
+  psa_m <- list(costs = as.matrix(psa_output$costs), outcomes = as.matrix(psa_output$outcomes))
   
-  probCE <- t(sapply(wtps, FUN = function(x) genProbCE(psa_output, wtp = x, DALYs = DALYs))) %>%
-    as_tibble() %>%
-    bind_cols(WTP = wtps, .)
+  # probability of cost effectiveness: a row per willingness-to-pay value, a column per drug
+  probCE <- t(vapply(wtps, function(x) genProbCE(psa_m, wtp = x, DALYs = DALYs), numeric(ncol(psa_m$costs))))
   
-  # use apply functions because they are easier to understand
-  
-  return(probCE)
+  return(data.frame(WTP = wtps, probCE, check.names = FALSE))
   
 }
 
