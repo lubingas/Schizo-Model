@@ -80,23 +80,23 @@ $$\text{Cost} = \sum_{t=0}^{T-1} \frac{1}{(1+r_{\text{C}})^{t}} \sum_{s} \pi_{t,
 
 **Staff pay.** Each staff member's hourly pay is their annual salary over the hours worked in a year, $h_k = S_k / H$, for psychiatrists (psy), psychiatric clinical officers (co), psychiatric nurses (nu) and pharmacy assistants (ph).
 
-**A cycle in hospital** (the four relapse states; a stay of $L$ days on chlorpromazine). Ward rounds are counted per week, so they are divided by 7 for a daily cost. Laboratory tests (a blood count, syphilis and HIV) are done once per stay:
+**A cycle in hospital** (the four relapse states; a stay of $L$ days on chlorpromazine). Ward rounds are counted per week, so they are divided by 7 for a daily cost. Laboratory tests (a blood count, syphilis and HIV) are done once per stay. A share $p^{\text{IP}}_{\text{carer}}$ of patients have a carer visit $v_{\text{carer}}$ times a week:
 
 $$C^{\text{IP}}_{\text{staff}} = \left[\frac{1}{7}\left(R_{\text{maj}} \frac{d_{\text{maj}}}{60} \big(N^{\text{maj}}_{\text{psy}} h_{\text{psy}} + N^{\text{maj}}_{\text{co}} h_{\text{co}} + N^{\text{maj}}_{\text{nu}} h_{\text{nu}}\big) + R_{\text{min}} \frac{d_{\text{min}}}{60} \big(N^{\text{min}}_{\text{co}} h_{\text{co}} + N^{\text{min}}_{\text{nu}} h_{\text{nu}}\big)\right) + N_{\text{adm}} \frac{d_{\text{adm}}}{60} h_{\text{nu}}\right] \tau L$$
 
 $$C^{\text{IP}}_{\text{lab}} = \frac{\text{CPI}_{2012}}{\text{CPI}_{2001}} \Big(c_{\text{FBC}} f_{\text{FBC}} + c_{\text{ESR}} f_{\text{ESR}} + p_{\text{TPHA}}\, c_{\text{TPHA}} f_{\text{TPHA}} + (1 - p_{\text{TPHA}})\, c_{\text{VDRL}} f_{\text{VDRL}} + c_{\text{HIV}} f_{\text{HIV}}\Big)$$
 
-$$C^{\text{IP}}_{\text{capital}} = k_{\text{IP}}\, \tau L \qquad C^{\text{IP}}_{\text{travel}} = 2 c_{\text{trip}}\, p_{\text{carer}} \frac{\tau L\, v_{\text{carer}}}{7} + 2 c_{\text{trip}} \qquad C^{\text{IP}}_{\text{work}} = \lambda (1 - u)\, \text{GDP}\, \tau$$
+$$C^{\text{IP}}_{\text{capital}} = k_{\text{IP}}\, \tau L \qquad C^{\text{IP}}_{\text{travel}} = 2 c_{\text{trip}}\, p^{\text{IP}}_{\text{carer}} \frac{\tau L\, v_{\text{carer}}}{7} + 2 c_{\text{trip}} \qquad C^{\text{IP}}_{\text{work}} = \lambda (1 - u)\, \text{GDP}\, \tau$$
 
 $$C^{\text{acute}} = L\, c_{\text{CPZ}} n_{\text{CPZ}} + \text{EPS}_{\text{CPZ}}\, L\, c_{\text{bz}} n_{\text{bz}} + \text{DM}_{\text{CPZ}}\, C_{\text{DM}} + C^{\text{IP}}_{\text{staff}} + C^{\text{IP}}_{\text{lab}} + C^{\text{IP}}_{\text{capital}} + C^{\text{IP}}_{\text{travel}} + C^{\text{IP}}_{\text{work}} + C_{\text{carer}}$$
 
-**A cycle as an outpatient** ($V$ visits a month, so $12V\tau$ visits a cycle). The consultation is with a psychiatrist (a share $\sigma_{\text{psy}}$ of patients) or a clinical officer, and a nurse; then the drugs are dispensed. Blood counts are done once a cycle:
+**A cycle as an outpatient** ($V$ visits a month, so $12V\tau$ visits a cycle). The consultation is with a psychiatrist (a share $\sigma_{\text{psy}}$ of patients) or a clinical officer, and a nurse; then the drugs are dispensed. Blood counts are done once a cycle. A share $p^{\text{OP}}_{\text{carer}}$ of patients come to their visits with a carer:
 
 $$C^{\text{OP}}_{\text{staff}} = \left[\frac{d_{\text{con}}}{60} \big(N_{\text{psy}}\, \sigma_{\text{psy}} h_{\text{psy}} + N_{\text{co}} (1 - \sigma_{\text{psy}}) h_{\text{co}} + N_{\text{nu}}\, \sigma_{\text{nu}} h_{\text{nu}}\big) + N_{\text{ph}} \frac{d_{\text{disp}}}{60} h_{\text{ph}}\right] 12 V \tau$$
 
 $$C^{\text{OP}}_{\text{lab}} = \frac{\text{CPI}_{2012}}{\text{CPI}_{2001}} \big(c_{\text{FBC}} f_{\text{FBC}} + c_{\text{ESR}} f_{\text{ESR}}\big) \qquad C^{\text{OP}}_{\text{capital}} = k_{\text{OP}}\, 12 V \tau$$
 
-$$C^{\text{OP}}_{\text{travel}} = 2 c_{\text{trip}} (p_{\text{carer}} + 1)\, 12 V \tau \qquad C^{\text{OP}}_{\text{work}} = \lambda (1 - u) \frac{\text{GDP}}{264}\, 12 V \tau$$
+$$C^{\text{OP}}_{\text{travel}} = 2 c_{\text{trip}} (p^{\text{OP}}_{\text{carer}} + 1)\, 12 V \tau \qquad C^{\text{OP}}_{\text{work}} = \lambda (1 - u) \frac{\text{GDP}}{264}\, 12 V \tau$$
 
 On drug $j$ (tablets a day $n_j$ at price $c_j$; benzhexol for EPS for $\delta_{\text{EPS}}$ years), and on fluphenazine decanoate (injections a month):
 
@@ -145,7 +145,7 @@ In the probabilistic analysis, probabilities, proportions and disability weights
 | $L$ | `LOS` | 60 days |
 | $c$ and $f$ for each test; $p_{\text{TPHA}}$ | `FBC_cost`, `FBC_freq`, … `HIV_cost`, `HIV_freq`; `TPHA_proportion` | each test once (a stay in hospital, a cycle as an outpatient); 0.1 |
 | $k_{\text{IP}}$, $k_{\text{OP}}$ | `capital_costs_per_inpatient_per_day`, `capital_costs_per_outpatient_visit` | $8.46 a day, $2.49 a visit |
-| $c_{\text{trip}}$; $p_{\text{carer}}$; $v_{\text{carer}}$ | `averagetravel_cost`; `caregiver_prop`; `caregiver_freq` (per `every` = 7 days) | $2 each way; 0.4; 1 visit a week |
+| $c_{\text{trip}}$; $p^{\text{IP}}_{\text{carer}}$, $v_{\text{carer}}$; $p^{\text{OP}}_{\text{carer}}$ | `averagetravel_cost`; `caregiver_prop` (hospital patients visited by a carer), `caregiver_freq` (visits per `every` = 7 days); `caregiver_visit` (outpatients who come with a carer) | $2 each way; 0.4, 1 visit a week; 0.3 |
 | $\lambda$, $u$, GDP; $\ell$ | `laborforcerate`, `unemploymentrate`, `GDP_percapita`; `DALY_caretaker` | 0.706, 0.052, $547; 0.25 |
 | $C_{\text{DM}}$; $c_j$, $n_j$ | `cDiabetes`; `…_cost`, `…_qty` for each drug | $627 a year; Table 2 of the paper |
 | $c_{\text{bz}}$, $n_{\text{bz}}$ | `artane_cost`, `artane_qty` | $0.016, 1 a day |
@@ -180,6 +180,7 @@ The published results came from the Excel model, which is kept in this repositor
 | **Background mortality** (bug) | The WHO life table for Uganda gives the probability of dying within each 5-year age group (₅qₓ). These were used as yearly probabilities, so people died about five times too fast: life expectancy from age 25 was 16.7 years, against 39 years in the same life table | The 5-year probabilities are converted to yearly ones, 1 − (1 − ₅qₓ)^(1/5), using the width of each age group. Life expectancy from age 25 is now 33.3 years, including the extra mortality from schizophrenia | +$2,619 to +$2,657; DALYs −5.54 to −5.55 |
 | **Staff time** (bug) | Ward rounds are counted per week, but only the psychiatrist's major round was divided by 7 to give a daily cost, and the daily drug round was added in hours rather than dollars. In outpatient care, the consultation length applied to the psychiatrist only, so the clinical officer and nurse were costed for a full hour | Every weekly round is divided by 7, the drug round is costed at the nurse's hourly pay, and the consultation length applies to everyone at it (equations above). Staff time per hospital stay falls from $123.25 to $30.63, and per year of outpatient care from $15.11 to $7.44 | −$257 to −$292 |
 | **Laboratory tests** (bug) | Tests were costed 12 times a cycle, as if done every month of the year: blood counts for outpatients, and blood counts, syphilis and HIV tests for each hospital stay | As the paper's methods describe: a blood count once a cycle, and the hospital tests once per stay (equations above). Lab costs per hospital stay fall from $117.28 to $9.77, and per year of outpatient care from $60.73 to $5.06 | −$1,124 to −$1,136 |
+| **Carers at outpatient visits** | Carers' travel to outpatient visits used the share of hospital patients visited by a carer (0.4). The share of outpatients who come to clinic with a carer (0.3) was in the inputs but never used | Uses the share of outpatients who come with a carer (`caregiver_visit`). Carer travel per year of outpatient care falls from $19.20 to $14.40 | −$82 to −$85 |
 | **Probability of cost-effectiveness** (bug) | Net benefit was computed as WTP × DALYs − cost, with DALYs incurred, so more DALYs counted as a benefit (the PSA sheet, and the net-benefit equation in the paper). The acceptability curve and the published shares (risperidone most cost-effective in 85% of simulations at $547 and 74% at $1,641) used this | DALYs count as a loss: net benefit = −WTP × DALYs − cost | None on the base case; changes the acceptability curve |
 
 Changes interact, so their effects don't add up exactly to the difference between the two models. Inpatient drug costs follow the length of stay, as in the Excel model; this matters only in the sensitivity analyses. Table 2 of the paper gives the staff at ward rounds the wrong way round (2 clinical officers and 1 nurse); the model's counts, 1 clinical officer and 2 nurses at each round, are the correct ones. The R model runs 70 yearly cycles (to age 94), the Excel model 62 (to age 86); with the corrected mortality about 2% of the cohort is still alive at 86, so this adds about $4 and 0.02 DALYs per patient. The fluphenazine decanoate price ($1.406 per 25 mg ampoule, from the NMS October 2010 catalogue) is kept as published, although it cannot be reproduced from the catalogue price of 3,950 UGX per ampoule at 2,577 UGX/$. The schizophrenia-related death probabilities (WHO 2008 deaths by cause, in wider age bands) are used as yearly probabilities, as before.
@@ -188,13 +189,13 @@ Base-case results per patient (costs in 2012 US$):
 
 | Drug | Cost, Excel model (2015) | Cost, R model | DALYs, Excel model | DALYs, R model |
 |---|---|---|---|---|
-| Chlorpromazine | $4,617 | $6,313 | 27.608 | 22.066 |
-| Haloperidol | $4,440 | $6,068 | 27.563 | 22.012 |
-| Quetiapine | $4,943 | $6,313 | 27.562 | 22.009 |
-| Risperidone | $4,424 | $6,053 | 27.557 | 22.008 |
-| Olanzapine | $4,454 | $6,064 | 27.552 | 22.003 |
+| Chlorpromazine | $4,617 | $6,231 | 27.608 | 22.066 |
+| Haloperidol | $4,440 | $5,984 | 27.563 | 22.012 |
+| Quetiapine | $4,943 | $6,229 | 27.562 | 22.009 |
+| Risperidone | $4,424 | $5,969 | 27.557 | 22.008 |
+| Olanzapine | $4,454 | $5,980 | 27.552 | 22.003 |
 
-In the Excel model, olanzapine cost $5,868 per DALY averted compared with risperidone. In the R model, chlorpromazine, haloperidol and quetiapine are dominated. Risperidone costs the least; olanzapine costs $11.19 more per patient and averts 0.005 DALYs, or $2,284 per DALY averted. That is above three times Uganda's 2012 GDP per capita ($1,641), so risperidone is the cost-effective choice at that threshold. The differences are small, though: in the probabilistic analysis (1,000 draws), risperidone is the most cost-effective drug in about 55% of draws at $1,641 per DALY averted, and olanzapine in about 44%.
+In the Excel model, olanzapine cost $5,868 per DALY averted compared with risperidone. In the R model, chlorpromazine, haloperidol and quetiapine are dominated. Risperidone costs the least; olanzapine costs $10.36 more per patient and averts 0.005 DALYs, or $2,115 per DALY averted. That is above three times Uganda's 2012 GDP per capita ($1,641), so risperidone is the cost-effective choice at that threshold. The differences are small, though: in the probabilistic analysis (1,000 draws), risperidone is the most cost-effective drug in about 55% of draws at $1,641 per DALY averted, and olanzapine in about 45%.
 
 ## Running it
 

@@ -156,8 +156,9 @@ op_costs <- function(params, cpi) {
   # d) capital and overheads, per visit
   capital <- params[["capital_costs_per_outpatient_visit"]]*params[["visitation_frequency"]]*params[["time"]]*12
   
-  # e) travel to each visit: carer and patient
-  carer.travel   <- params[["caregiver_prop"]]*params[["averagetravel_cost"]]*2*params[["visitation_frequency"]]*params[["time"]]*12
+  # e) travel to each visit: the carer (for the share of outpatients who come with one) and the patient
+  #    (the Excel model used the share of hospital patients visited by a carer, caregiver_prop)
+  carer.travel   <- params[["caregiver_visit"]]*params[["averagetravel_cost"]]*2*params[["visitation_frequency"]]*params[["time"]]*12
   patient.travel <- params[["averagetravel_cost"]]*2*params[["visitation_frequency"]]*params[["time"]]*12
   
   # f) indirect: the patient's lost work days for visits
