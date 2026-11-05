@@ -646,14 +646,18 @@ RunPSA <- function(model, nsims,
 }
 
 # function takes the maxwtp, a vector or dataframe of costs and outcomes for all interventions
-# and returns probability that a given intervention is cost effective 
-genProbCE <- function(psa_output, wtp) {
-  
+# and returns probability that a given intervention is cost effective
+# DALYs = TRUE: outcomes are DALYs incurred, so fewer is better (as in IncrementalAnalysis)
+genProbCE <- function(psa_output, wtp, DALYs = TRUE) {
+
   # psa_res is a list with elements: costs, outcomes
   costs <- as.matrix(psa_output$costs)
   outcomes <- as.matrix(psa_output$outcomes)
 
-  NMB <- outcomes*wtp - costs                   # NMB = DALYs * wtp - COSTS
+  # effectiveness: higher is better (DALYs incurred are negated)
+  # (the Excel model, and this function until Nov 2026, added DALYs: NMB = DALYs * wtp - COSTS)
+  eff <- if (DALYs) -outcomes else outcomes
+  NMB <- eff*wtp - costs                        # NMB = -DALYs * wtp - COSTS
   #maxNMB <- apply(NMB, MARGIN = 1, max)         # find maximum for each row (max nmb)
   maxNMB <- max.col(NMB, ties.method = "first")  ## much faster
   #whichMaxNMB <- (NMB == maxNMB)                # check which intervention has max NMB at that WTP, it is the most cost effective at that WTP
@@ -668,8 +672,8 @@ genProbCE <- function(psa_output, wtp) {
 }
 
 
-RunCEAC <- function(psa_output, wtp, by) {
-  
+RunCEAC <- function(psa_output, wtp, by, DALYs = TRUE) {
+
   wtps <- seq(0, wtp, by = by)
   
   # # probability of cost effectiveness calculations
@@ -677,7 +681,7 @@ RunCEAC <- function(psa_output, wtp, by) {
   #   # bind_rows() %>%
   #   bind_cols(WTP = wtps, .)
   
-  probCE <- t(sapply(wtps, FUN = function(x) genProbCE(psa_output, wtp = x))) %>% 
+  probCE <- t(sapply(wtps, FUN = function(x) genProbCE(psa_output, wtp = x, DALYs = DALYs))) %>%
     as_tibble() %>%
     bind_cols(WTP = wtps, .)
   
