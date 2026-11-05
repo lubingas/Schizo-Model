@@ -61,98 +61,261 @@ getTPbounds <- function(data, q) {
     lapply(function(a) qbeta(q, a, sum(a) - a))
 }
 
-## Markov trace, DALYs and costs for one treatment sequence
-# primary, secondary: parameters of the first- and second-line drug, in this order:
-#   c(disAE, disEff, disOther, pHosp, pWt, eps, diab, cost, qty)
-# pRemit: probability of remission when treated in hospital
-# p: list of model parameters plus the quantities RunModel() derives from them
-#    (death probabilities, life expectancy, discount factors, costs per state, ...)
-mtrace <- function(primary, secondary, pRemit, p) {
-  with(p, {
-    ## transition probability array; the 3rd dimension holds the age-specific death probabilities
-    trans <- array(0,c(nStates,nStates,nCycles))
-    trans[1,2,] <- primary[1] + primary[2]
-    trans[2,3,] <- secondary[1] + secondary[2]
+## ----------------------------
+## Pieces of the model that don't depend on the drug sequence
+## Each takes the parameters it needs as arguments: params is the named vector of model
+## parameters (base case, one-way or PSA draw), read by name with [[ ]]
+## ----------------------------
 
-    # residual on 1st line to residual off 1st line and residual on 2nd line to residual off 2nd line
-    trans[1,4,] <- primary[3]
-    trans[2,5,] <- secondary[3]
+## function to look up a table's value for the age of the cohort in each cycle
+## INSTRUCTIONS
+# 1) tab: a table by age band, with columns ages (first age of the band) and index (band number)
+# 2) values: the value of each band to return, e.g. tab$p.death
+# 3) ages: the cohort's age in each cycle
+by_age <- function(tab, values, ages) {
+  values[match(findInterval(x = ages, vec = tab$ages), tab$index)]
+}
 
-    # residual on 1st line to acute was on 1st line and residual on 2nd line to acute was on 2nd line
-    trans[1,8,] <- primary[4]
-    trans[2,9,] <- secondary[4]
+## function to collect one drug's parameters in the order mtrace() expects:
+## c(disAE, disEff, disOther, pHosp, pWt, eps, diab, cost, qty)
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+# 2) code: the drug's code at the end of its parameter names, e.g. "CPZ"
+# 3) name: the drug's name at the start of its price and dose names, e.g. "chlorpromazine"
+drug_parms <- function(params, code, name) {
+  unname(params[c(paste0(c("disAE", "disEff", "disOther", "pHosp", "pWt", "eps", "diab"), code),
+                  paste0(name, c("_cost", "_qty")))])
+}
 
-    trans[4,6,] <- trans[5,7,] <- pHospUntrt
+## function to work out the indirect cost of a carer's lost work time, per cycle (in hospital and as an outpatient)
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+carer_indirect <- function(params) {
+  params[["laborforcerate"]]*(1-params[["unemploymentrate"]])*params[["GDP_percapita"]]*params[["time"]]*params[["DALY_caretaker"]]*(264/365)
+}
 
-    trans[6,1,] <- trans[7,2,] <- trans[8,2,] <- trans[9,3,] <- pRemit
+## function to work out the costs of a cycle in hospital that don't depend on the drug
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+# 2) cpi: the CPI table (inputs$cpi), to bring 2001 lab prices to 2012
+# returns a named list: personnel, lab, capital, carer.travel, patient.travel, indirect, carer.indirect
+ip_costs <- function(params, cpi) {
+  
+  # b) personnel: staff time on ward rounds (per week) and giving drugs (per day), over the length of stay
+  # (as in the Excel model, the 1/7 that turns weekly rounds into daily ones applies to the psychiatrist's major round only)
+  psy.major  <- params[["major_week"]]*params[["PSY_major"]]*(params[["duration_major"]]/60)*(params[["rate_psy"]]/params[["workhours_year"]])
+  pco.major  <- params[["major_week"]]*params[["PCO_major"]]*(params[["duration_major"]]/60)*(params[["rate_pco"]]/params[["workhours_year"]])
+  pno.major  <- params[["major_week"]]*params[["PNO_major"]]*(params[["duration_major"]]/60)*(params[["rate_pno"]]/params[["workhours_year"]])
+  pco.minor  <- params[["minor_week"]]*params[["PCO_minor"]]*(params[["duration_minor"]]/60)*(params[["rate_pco"]]/params[["workhours_year"]])
+  pno.minor  <- params[["minor_week"]]*params[["PNO_minor"]]*(params[["duration_minor"]]/60)*(params[["rate_pno"]]/params[["workhours_year"]])
+  drug.admin <- params[["PNO_drugadmin"]]*(params[["duration_drugadmin"]]/60)
+  personnel  <- (((1/7)*psy.major + pco.major + pno.major + pco.minor + pno.minor) + drug.admin)*params[["time"]]*params[["LOS"]]
+  
+  # c) laboratory tests (2001 prices); TPHA or VDRL for syphilis
+  tests <- params[["FBC_cost"]]*params[["FBC_freq"]] + params[["ESR_cost"]]*params[["ESR_freq"]] +
+    params[["TPHA_cost"]]*params[["TPHA_freq"]]*params[["TPHA_proportion"]] +
+    params[["VDRL_cost"]]*params[["VDRL_freq"]]*(1-params[["TPHA_proportion"]]) + params[["HIV_cost"]]*params[["HIV_freq"]]
+  lab <- cpi_ratio(cpi, 2001)*tests*params[["time"]]*12
+  
+  # d) capital and overheads, per day in hospital
+  capital <- params[["capital_costs_per_inpatient_per_day"]]*params[["time"]]*params[["LOS"]]
+  
+  # e) travel: carers' visits during the stay, and the patient's trip there and back
+  carer.travel   <- params[["averagetravel_cost"]]*2*params[["caregiver_prop"]]*(params[["time"]]*params[["LOS"]]*params[["caregiver_freq"]])/params[["every"]]
+  patient.travel <- params[["averagetravel_cost"]]*2
+  
+  # f) indirect: the patient's lost work time
+  indirect <- params[["laborforcerate"]]*(1-params[["unemploymentrate"]])*params[["GDP_percapita"]]*params[["time"]]
+  
+  list(personnel = personnel, lab = lab, capital = capital, carer.travel = carer.travel,
+       patient.travel = patient.travel, indirect = indirect, carer.indirect = carer_indirect(params))
+}
 
-    ## get time varying death probabilities, for every cycle at once
-    # insert death probabilities: column nStates of each cycle's matrix
-    trans[,nStates,] <- rep(pDie, each = nStates)
-    # row sums of every cycle's matrix, as a [state, cycle] matrix (the diagonal is still 0)
-    rowsums <- colSums(aperm(trans, c(2, 1, 3)))
-    # insert probability of remaining in the same state in each cycle (complement of rowsums)
-    # idx picks the diagonal of every cycle's matrix: [1,1,1], [2,2,1], ..., [nStates,nStates,nCycles]
-    idx <- cbind(rep(1:nStates, nCycles), rep(1:nStates, nCycles), rep(1:nCycles, each = nStates))
-    trans[idx] <- 1 - rowsums
-    # set absorbing state (death) probability to 1
-    trans[nStates,nStates,] <- 1
+## function to work out the costs of a cycle as an outpatient that don't depend on the drug
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+# 2) cpi: the CPI table (inputs$cpi), to bring 2001 lab prices to 2012
+# returns a named list: personnel, lab, capital, carer.travel, patient.travel, indirect, carer.indirect
+op_costs <- function(params, cpi) {
+  
+  # b) personnel: the consultation (psychiatrist or clinical officer, and a nurse) and dispensing, per visit
+  # (as in the Excel model, the consultation length multiplies the psychiatrist's time only)
+  psy        <- params[["PSY"]]*params[["PSY_prop"]]*(params[["rate_psy"]]/params[["workhours_year"]])
+  pco        <- params[["PCO"]]*(1-params[["PSY_prop"]])*(params[["rate_pco"]]/params[["workhours_year"]])
+  nurse      <- params[["nurse"]]*params[["nurse_prop"]]*(params[["rate_pno"]]/params[["workhours_year"]])
+  pharmacist <- params[["pharm"]]*(params[["duration_drugdisp"]]/60)*(params[["rate_pharm"]]/params[["workhours_year"]])
+  personnel  <- (((params[["duration_consult"]]/60)*psy + pco + nurse) + pharmacist)*params[["visitation_frequency"]]*params[["time"]]*12
+  
+  # c) laboratory tests (2001 prices)
+  lab <- (cpi_ratio(cpi, 2001)*(params[["FBC_cost"]]*params[["FBC_freq"]] + params[["ESR_cost"]]*params[["ESR_freq"]]))*params[["time"]]*12
+  
+  # d) capital and overheads, per visit
+  capital <- params[["capital_costs_per_outpatient_visit"]]*params[["visitation_frequency"]]*params[["time"]]*12
+  
+  # e) travel to each visit: carer and patient
+  carer.travel   <- params[["caregiver_prop"]]*params[["averagetravel_cost"]]*2*params[["visitation_frequency"]]*params[["time"]]*12
+  patient.travel <- params[["averagetravel_cost"]]*2*params[["visitation_frequency"]]*params[["time"]]*12
+  
+  # f) indirect: the patient's lost work days for visits
+  indirect <- params[["laborforcerate"]]*(1-params[["unemploymentrate"]])*(params[["GDP_percapita"]]/264)*(params[["visitation_frequency"]]*params[["time"]]*12)
+  
+  list(personnel = personnel, lab = lab, capital = capital, carer.travel = carer.travel,
+       patient.travel = patient.travel, indirect = indirect, carer.indirect = carer_indirect(params))
+}
 
-    # cohort trace [cycle, state]: everyone starts in state 1 (residual, on the first-line drug)
-    # and moves with the transition matrix for their age in that cycle
-    pop.trace <- matrix(0, nCycles, nStates)
-    pop.trace[1, ] <- c(1,0,0,0,0,0,0,0,0,0)
-    for (c in 2:nCycles) {
-      pop.trace[c, ] <- pop.trace[c-1, ] %*% trans[,,c-1]
-    }
+## function to work out the disability weight of a cycle on a drug: the phase, plus weight gain, EPS and diabetes
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+# 2) drug: the drug's parameters from drug_parms() (uses pWt, eps and diab)
+# 3) disutilDIAB: disability weight of diabetes (worked out in RunModel)
+# 4) phase: disability weight of the phase -- residualDALY, or acuteDALY in hospital
+state_weight <- function(params, drug, disutilDIAB, phase = params[["residualDALY"]]) {
+  phase + params[["disutilWeight"]]*drug[5] +
+    eps.risk(params[["pEPSPLA"]], drug[6])*params[["durEPS"]]*params[["disutilEPS"]] +
+    diab.risk(params[["pDiabetesHAL"]], drug[7])*disutilDIAB
+}
 
-    # calculate YLL: in cycle i, those alive in cycle i-1 times pDie[i-1] times expLife[i] (none in cycle 1)
-    int.YLL <- rowSums(pop.trace[,1:9])
-    YLL <- c(0, int.YLL[-nCycles] * expLife[-1] * pDie[-nCycles])
+## function to work out the disability weight of a cycle on fluphenazine decanoate (the 3rd-line drug)
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+# 2) disutilDIAB: disability weight of diabetes (worked out in RunModel)
+# fluphenazine has its own diabetes probability rather than a relative risk, so it doesn't use state_weight()
+third_line_weight <- function(params, disutilDIAB) {
+  params[["residualDALY"]] + params[["disutilWeight"]]*params[["pWtFLU"]] +
+    eps.risk(params[["pEPSPLA"]], params[["epsFLU"]])*params[["durEPS"]]*params[["disutilEPS"]] +
+    params[["pDiabetesFLU"]]*disutilDIAB
+}
 
-    # calculate vector of utilities then count the DALYs
-    res.1st.line <- residualDALY + disutilWeight * primary[5] + eps.risk(pEPSPLA,primary[6]) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,primary[7]) * disutilDIAB
-    res.2nd.line <- residualDALY + disutilWeight * secondary[5] + eps.risk(pEPSPLA,secondary[6]) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,secondary[7]) * disutilDIAB
-    res.3rd.line <- residualDALY + disutilWeight * pWtFLU + eps.risk(pEPSPLA,epsFLU) * durEPS * disutilEPS + pDiabetesFLU * disutilDIAB
-    res.off.1st.line <- res.off.2nd.line <- residualDALY
-    ac.off.1st.line <- ac.off.2nd.line <- ac.was.on.1st.line <- ac.was.on.2nd.line <- acuteDALY + disutilWeight * pWtCPZ + eps.risk(pEPSPLA,epsCPZ) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,diabCPZ) * disutilDIAB
-    utils.vec <- c(res.1st.line, res.2nd.line, res.3rd.line, res.off.1st.line, res.off.2nd.line, ac.off.1st.line, ac.off.2nd.line, ac.was.on.1st.line, ac.was.on.2nd.line, 0)
+## function to work out the cost of a cycle as an outpatient on a drug: the drug, benzhexol for EPS,
+## diabetes care, and the outpatient costs that don't depend on the drug
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+# 2) drug: the drug's parameters from drug_parms() (uses eps, diab, cost and qty)
+# 3) op: outpatient costs from op_costs()
+residual_cost <- function(params, drug, op) {
+  op.drug.costs(drug[8], drug[9]) +
+    eps.risk(params[["pEPSPLA"]], drug[6])*op.drug.costs(params[["artane_cost"]], params[["artane_qty"]])*params[["durEPS"]] +
+    diab.risk(params[["pDiabetesHAL"]], drug[7])*params[["cDiabetes"]] +
+    op$personnel + op$lab + op$capital + op$carer.travel + op$patient.travel + op$indirect + op$carer.indirect
+}
 
-    YLD <- pop.trace %*% utils.vec
-    DALYS <- discFactOutcomes * (YLL + YLD)
+## function to work out the cost of a cycle as an outpatient on fluphenazine decanoate (the 3rd-line drug)
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+# 2) op: outpatient costs from op_costs()
+# a monthly injection, so priced per month; its own diabetes probability rather than a relative risk
+third_line_cost <- function(params, op) {
+  params[["fluphenazine_cost"]]*params[["fluphenazine_qty"]]*12 +
+    eps.risk(params[["pEPSPLA"]], params[["epsFLU"]])*op.drug.costs(params[["artane_cost"]], params[["artane_qty"]])*params[["durEPS"]] +
+    params[["pDiabetesFLU"]]*params[["cDiabetes"]] +
+    op$personnel + op$lab + op$capital + op$carer.travel + op$patient.travel + op$indirect + op$carer.indirect
+}
 
-    # calculate vector of costs and compute total costs
-    c.res.1st <- op.drug.costs(primary[8], primary[9]) + eps.risk(pEPSPLA,primary[6]) * op.drug.costs(artane_cost, artane_qty) * durEPS + diab.risk(pDiabetesHAL,primary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
-    c.res.2nd <- op.drug.costs(secondary[8], secondary[9]) + eps.risk(pEPSPLA,secondary[6]) * op.drug.costs(artane_cost, artane_qty) * durEPS + diab.risk(pDiabetesHAL,secondary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
-    c.res.3rd <- fluphenazine_cost * fluphenazine_qty * 12 + eps.risk(pEPSPLA,epsFLU) * op.drug.costs(artane_cost, artane_qty) * durEPS + pDiabetesFLU * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
-    c.res.off.1st <- c.res.off.2nd <- 0
-    c.ac.off.1st <- c.ac.off.2nd <- c.ac.was.on.1st <- c.ac.was.on.2nd <- ip.drug.costs(chlorpromazine_cost, chlorpromazine_qty, LOS) + eps.risk(pEPSPLA,epsCPZ) * ip.drug.costs(artane_cost, artane_qty, LOS) + diab.risk(pDiabetesHAL,diabCPZ) * cDiabetes + ip.personnel.costs + ip.lab.costs + ip.capital.costs + ip.carer.travel.costs + ip.patient.travel.costs + ip.indirect + carer.indirect
-
-    cost.vec <- c(c.res.1st, c.res.2nd, c.res.3rd, c.res.off.1st, c.res.off.2nd, c.ac.off.1st, c.ac.off.2nd, c.ac.was.on.1st, c.ac.was.on.2nd, 0)
-
-    costs <- discFactCosts * (pop.trace %*% cost.vec)
-
-    # return objects we can work with
-    #return(list(trace = pop.trace, YLL = YLL, YLD.trace = YLD.trace, YLD = YLD, 
-    #            tot.DALYs = DALYS, DALYS = sum(DALYS), 
-    #            cost.trace = cost.trace, cost.vector = cost.vec, tot.costs = costs, Costs = sum(costs)))
-
-    # return objects we can work with
-    # trace: proportion of the cohort in each state in each cycle
-    list(DALYS = sum(DALYS), Costs = sum(costs), trace = pop.trace)
-  })
+## function to work out the cost of a cycle with an acute episode: a hospital stay on a drug
+## (chlorpromazine in the model), benzhexol for EPS, diabetes care, and the hospital costs that don't depend on the drug
+## INSTRUCTIONS
+# 1) params: named vector of model parameters
+# 2) drug: the drug's parameters from drug_parms() (uses eps, diab, cost and qty)
+# 3) ip: hospital costs from ip_costs()
+acute_cost <- function(params, drug, ip) {
+  ip.drug.costs(drug[8], drug[9], params[["LOS"]]) +
+    eps.risk(params[["pEPSPLA"]], drug[6])*ip.drug.costs(params[["artane_cost"]], params[["artane_qty"]], params[["LOS"]]) +
+    diab.risk(params[["pDiabetesHAL"]], drug[7])*params[["cDiabetes"]] +
+    ip$personnel + ip$lab + ip$capital + ip$carer.travel + ip$patient.travel + ip$indirect + ip$carer.indirect
 }
 
 
+## function to run the Markov trace, DALYs and costs for one treatment sequence
+## INSTRUCTIONS
+# 1) primary, secondary: the first- and second-line drug's parameters, from drug_parms()
+# 2) pRemit: probability of remission when treated in hospital
+# 3) params: named vector of model parameters
+# 4) shared: what RunModel() works out once for all five sequences -- the death probabilities, life
+#    expectancy and discount factors for each cycle, and the disability weights and costs of the states
+#    that don't depend on the drugs
+# states: 1 residual on 1st line, 2 residual on 2nd line, 3 residual on 3rd line, 4 residual off 1st line,
+#   5 residual off 2nd line, 6 acute off 1st line, 7 acute off 2nd line, 8 acute was on 1st line,
+#   9 acute was on 2nd line, 10 dead
+mtrace <- function(primary, secondary, pRemit, params, shared) {
+  
+  nStates <- shared$nStates
+  nCycles <- shared$nCycles
+  pDie <- shared$pDie
+  
+  ## transition probability array; the 3rd dimension holds the age-specific death probabilities
+  trans <- array(0,c(nStates,nStates,nCycles))
+  trans[1,2,] <- primary[1] + primary[2]
+  trans[2,3,] <- secondary[1] + secondary[2]
+  
+  # residual on 1st line to residual off 1st line and residual on 2nd line to residual off 2nd line
+  trans[1,4,] <- primary[3]
+  trans[2,5,] <- secondary[3]
+  
+  # residual on 1st line to acute was on 1st line and residual on 2nd line to acute was on 2nd line
+  trans[1,8,] <- primary[4]
+  trans[2,9,] <- secondary[4]
+  
+  trans[4,6,] <- trans[5,7,] <- params[["pHospUntrt"]]
+  
+  trans[6,1,] <- trans[7,2,] <- trans[8,2,] <- trans[9,3,] <- pRemit
+  
+  ## get time varying death probabilities, for every cycle at once
+  # insert death probabilities: column nStates of each cycle's matrix
+  trans[,nStates,] <- rep(pDie, each = nStates)
+  # row sums of every cycle's matrix, as a [state, cycle] matrix (the diagonal is still 0)
+  rowsums <- colSums(aperm(trans, c(2, 1, 3)))
+  # insert probability of remaining in the same state in each cycle (complement of rowsums)
+  # idx picks the diagonal of every cycle's matrix: [1,1,1], [2,2,1], ..., [nStates,nStates,nCycles]
+  idx <- cbind(rep(1:nStates, nCycles), rep(1:nStates, nCycles), rep(1:nCycles, each = nStates))
+  trans[idx] <- 1 - rowsums
+  # set absorbing state (death) probability to 1
+  trans[nStates,nStates,] <- 1
+  
+  # cohort trace [cycle, state]: everyone starts in state 1 (residual, on the first-line drug)
+  # and moves with the transition matrix for their age in that cycle
+  pop.trace <- matrix(0, nCycles, nStates)
+  pop.trace[1, ] <- c(1,0,0,0,0,0,0,0,0,0)
+  for (c in 2:nCycles) {
+    pop.trace[c, ] <- pop.trace[c-1, ] %*% trans[,,c-1]
+  }
+  
+  # calculate YLL: in cycle i, those alive in cycle i-1 times pDie[i-1] times expLife[i] (none in cycle 1)
+  int.YLL <- rowSums(pop.trace[,1:9])
+  YLL <- c(0, int.YLL[-nCycles] * shared$expLife[-1] * pDie[-nCycles])
+  
+  # disability weight of each state: the two drugs of this sequence, then the states every sequence shares
+  utils.vec <- c(state_weight(params, primary, shared$disutilDIAB),
+                 state_weight(params, secondary, shared$disutilDIAB),
+                 shared$weights.other)
+  YLD <- pop.trace %*% utils.vec
+  DALYS <- shared$discFactOutcomes * (YLL + YLD)
+  
+  # cost of a cycle in each state, in the same order
+  cost.vec <- c(residual_cost(params, primary, shared$op),
+                residual_cost(params, secondary, shared$op),
+                shared$costs.other)
+  costs <- shared$discFactCosts * (pop.trace %*% cost.vec)
+  
+  # trace: proportion of the cohort in each state in each cycle
+  list(DALYS = sum(DALYS), Costs = sum(costs), trace = pop.trace)
+}
+
+
+## function to run the model: costs and DALYs of the five treatment sequences
+## INSTRUCTIONS
+# 1) inputs: from read_inputs() -- tables (life tables, CPI), nStates, nCycles and interventions
+# 2) baseparms, basetransitions: named vectors of parameters and transition probabilities
+#    (base case, one-way or PSA values)
+# 3) DALYs: TRUE when outcomes are DALYs (fewer is better)
+# 4) summary_only: TRUE returns just the costs and outcomes by drug (all the one-way and PSA runs need)
 RunModel <- function(inputs,
                      baseparms,
                      basetransitions,
                      DALYs = TRUE,
                      summary_only = FALSE) {
   
-  # model parameters, used by name in the formulas below
-  p <- c(as.list(baseparms), as.list(basetransitions),
-         list(nStates = inputs$nStates, nCycles = inputs$nCycles))
+  # model parameters: one named vector, read by name with [[ ]]
+  params <- c(baseparms, basetransitions)
   
   # Background mortality: the life table gives the probability of dying within each age band
   # (5-year bands in the WHO life table for Uganda), so convert it to a yearly probability
@@ -160,77 +323,58 @@ RunModel <- function(inputs,
   band <- c(diff(lt$ages), tail(diff(lt$ages), 1))
   q_year <- 1 - (1 - lt$p.death)^(1 / band)
   
-  # add the quantities derived from the parameters
-  p <- within(p, {
-    cycles <- seq(0, nCycles-1, by = time)
+  ## everything below depends only on the parameters, so it is worked out once and shared by the five sequences
+  cycles <- seq(0, inputs$nCycles-1, by = params[["time"]])
   
-    # discount factor
-    discFactCosts <- 1 / (1 + discCosts) ^ cycles
-    discFactOutcomes <- 1 / (1 + discOutcomes) ^ cycles
+  # discount factor
+  discFactCosts <- 1 / (1 + params[["discCosts"]]) ^ cycles
+  discFactOutcomes <- 1 / (1 + params[["discOutcomes"]]) ^ cycles
   
-    ## age in each cycle
-    ages <- age + cycles
+  ## age in each cycle, matched with the probability of death and the life expectancy for that age
+  ages <- params[["age"]] + cycles
+  p.death <- by_age(inputs$lifeTab, q_year, ages)
+  p.Schizo.death <- by_age(inputs$schizoTab, inputs$schizoTab$p.death, ages)
+  expLife <- by_age(inputs$lifeExp, inputs$lifeExp$yrs, ages)
   
-    # match age in each cycle with a probability of death
-    p.death <- q_year[match(findInterval(x=ages,vec=inputs$lifeTab$ages),inputs$lifeTab$index)]
-    p.Schizo.death <- inputs$schizoTab$p.death[match(findInterval(x=ages,vec=inputs$schizoTab$ages),inputs$schizoTab$index)]
-    expLife <- inputs$lifeExp$yrs[match(findInterval(x=ages,vec=inputs$lifeExp$ages),inputs$lifeExp$index)]
+  # calculate probability of death (from other causes, schizophrenia specific -- but not both)
+  pDie <- p.death + p.Schizo.death - (p.death * p.Schizo.death)
   
-    # calculate probability of death (from other causes, schizophrenia specific -- but not both)
-    pDie <- p.death + p.Schizo.death - (p.death * p.Schizo.death)
+  # diabetes mean disutility (in RunModel since its inputs vary in the sensitivity analyses)
+  disutilDIAB <- params[["pNeuro"]]*params[["dNeuro"]] + params[["pFoot"]]*params[["dFoot"]] +
+    params[["pImpotent"]]*params[["dImpotent"]] + params[["pNephro"]]*params[["dNephro"]] + params[["dDiabetes"]]
   
-    # diabetes mean disutility (but put into RunModel function since they will need to be run through sensitivity analysis)
-    disutilDIAB <- pNeuro * dNeuro + pFoot * dFoot + pImpotent * dImpotent + pNephro * dNephro + dDiabetes
+  # costs per cycle that don't depend on the drug: in hospital and as an outpatient
+  ip <- ip_costs(params, inputs$cpi)
+  op <- op_costs(params, inputs$cpi)
   
-    # no need for function for these below as they do not depend on the alternative chosen
-    # b) Personnel costs (a complicated formula)
-    ip.personnel.costs <- (((1/7)*(major_week*PSY_major*(duration_major/60)*(rate_psy/workhours_year))+(major_week*PCO_major*(duration_major/60)*(rate_pco/workhours_year))+(major_week*PNO_major*(duration_major/60)*(rate_pno/workhours_year))+(minor_week*PCO_minor*(duration_minor/60)*(rate_pco/workhours_year))+(minor_week*PNO_minor*(duration_minor/60)*(rate_pno/workhours_year)))+(PNO_drugadmin*(duration_drugadmin/60)))*time*LOS
-    op.personnel.costs <- (((duration_consult/60)*(PSY*PSY_prop*(rate_psy/workhours_year))+(PCO*(1-PSY_prop)*(rate_pco/workhours_year))+(nurse*nurse_prop*(rate_pno/workhours_year)))+(pharm*(duration_drugdisp/60)*(rate_pharm/workhours_year)))*visitation_frequency*time*12
+  # the states every sequence shares (3 to 10), in mtrace()'s order: residual on the 3rd-line drug,
+  # residual off the 1st- and 2nd-line drug, the four acute states (in hospital, on chlorpromazine), dead
+  cpz <- drug_parms(params, "CPZ", "chlorpromazine")
+  acute.weight <- state_weight(params, cpz, disutilDIAB, phase = params[["acuteDALY"]])
+  acute.cost <- acute_cost(params, cpz, ip)
   
-    # c) laboratory costs
-    ip.lab.costs <- cpi_ratio(inputs$cpi, 2001)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq+TPHA_cost*TPHA_freq*TPHA_proportion+VDRL_cost*VDRL_freq*(1-TPHA_proportion)+HIV_cost*HIV_freq)*time*12
-    op.lab.costs <- (cpi_ratio(inputs$cpi, 2001)*(FBC_cost*FBC_freq+ESR_cost*ESR_freq))*time*12
+  shared <- list(nStates = inputs$nStates, nCycles = inputs$nCycles, pDie = pDie, expLife = expLife,
+                 discFactCosts = discFactCosts, discFactOutcomes = discFactOutcomes,
+                 disutilDIAB = disutilDIAB, op = op,
+                 weights.other = c(third_line_weight(params, disutilDIAB),
+                                   params[["residualDALY"]], params[["residualDALY"]],
+                                   acute.weight, acute.weight, acute.weight, acute.weight, 0),
+                 costs.other = c(third_line_cost(params, op), 0, 0,
+                                 acute.cost, acute.cost, acute.cost, acute.cost, 0))
   
-    # d) capital and overheads
-    ip.capital.costs <- capital_costs_per_inpatient_per_day*time*LOS
-    op.capital.costs <- capital_costs_per_outpatient_visit*visitation_frequency*time*12
-  
-    # e) travel costs
-    ip.carer.travel.costs <- averagetravel_cost*2*caregiver_prop*(time*LOS*caregiver_freq)/every
-    op.carer.travel.costs <- caregiver_prop*averagetravel_cost*2*visitation_frequency*time*12
-  
-    ip.patient.travel.costs <- averagetravel_cost*2
-    op.patient.travel.costs <- averagetravel_cost*2*visitation_frequency*time*12
-  
-    # f) Indirect costs
-    carer.indirect <- laborforcerate*(1-unemploymentrate)*GDP_percapita*time*DALY_caretaker*(264/365)
-    ip.indirect <- laborforcerate*(1-unemploymentrate)*GDP_percapita*time
-    op.indirect <- laborforcerate*(1-unemploymentrate)*(GDP_percapita/264)*(visitation_frequency*time*12)
-  })
-  
-  ## Markov traces for each treatment sequence (in the order of inputs$interventions)
-  traces <- with(p, {
-    mTrace.cpz <- mtrace(primary = c(disAECPZ, disEffCPZ, disOtherCPZ, pHospCPZ, pWtCPZ, epsCPZ, diabCPZ, chlorpromazine_cost, chlorpromazine_qty), 
-                         secondary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty), 
-                         pRemit = pRemitCPZ, p = p)
-  
-    mTrace.hal <- mtrace(primary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
-                         secondary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty), 
-                         pRemit = pRemitCPZ, p = p)
-  
-    mTrace.ris <- mtrace(primary = c(disAERIS, disEffRIS, disOtherRIS, pHospRIS, pWtRIS, epsRIS, diabRIS, risperidone_cost, risperidone_qty),
-                         secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
-                         pRemit = pRemitCPZ, p = p)
-  
-    mTrace.ola <- mtrace(primary = c(disAEOLA, disEffOLA, disOtherOLA, pHospOLA, pWtOLA, epsOLA, diabOLA, olanzapine_cost, olanzapine_qty),
-                         secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
-                         pRemit = pRemitCPZ, p = p)
-  
-    mTrace.que <- mtrace(primary = c(disAEQUE, disEffQUE, disOtherQUE, pHospQUE, pWtQUE, epsQUE, diabQUE, quetiapine_cost, quetiapine_qty),
-                         secondary = c(disAEHAL, disEffHAL, disOtherHAL, pHospHAL, pWtHAL, epsHAL, diabHAL, haloperidol_cost, haloperidol_qty), 
-                         pRemit = pRemitCPZ, p = p)
-    list(mTrace.cpz, mTrace.hal, mTrace.que, mTrace.ris, mTrace.ola)
-  })
+  ## Markov traces for each treatment sequence (in the order of inputs$interventions):
+  ## first-line drug, second-line drug (fluphenazine decanoate is third line for all)
+  hal <- drug_parms(params, "HAL", "haloperidol")
+  que <- drug_parms(params, "QUE", "quetiapine")
+  ris <- drug_parms(params, "RIS", "risperidone")
+  ola <- drug_parms(params, "OLA", "olanzapine")
+  traces <- list(
+    mtrace(primary = cpz, secondary = ris, pRemit = params[["pRemitCPZ"]], params = params, shared = shared),
+    mtrace(primary = hal, secondary = ris, pRemit = params[["pRemitCPZ"]], params = params, shared = shared),
+    mtrace(primary = que, secondary = hal, pRemit = params[["pRemitCPZ"]], params = params, shared = shared),
+    mtrace(primary = ris, secondary = hal, pRemit = params[["pRemitCPZ"]], params = params, shared = shared),
+    mtrace(primary = ola, secondary = hal, pRemit = params[["pRemitCPZ"]], params = params, shared = shared)
+  )
   
   outcomes <- sapply(traces, `[[`, "DALYS")
   costs <- sapply(traces, `[[`, "Costs")
