@@ -16,15 +16,67 @@ It is a 10-state Markov cohort model with 70 annual cycles. Outcomes are costs (
 
 Each year people stay in their state (the loops) or move along one arrow. Everyone starts in the residual phase on their first-line drug. Side effects or lack of efficacy move people to the next drug, as does remission after a relapse on treatment; remission after a relapse off treatment restarts the same drug. The third-line drug is fluphenazine decanoate. The relapse states are spent in hospital.
 
-## How costs are calculated
+## How the model calculates results
 
-Each year (cycle length $\tau$ = 1 year) a person's cost depends on the state they are in. Costs are discounted and summed over the cohort trace $\pi_{t,s}$, the share of the cohort in state $s$ in cycle $t$:
+The model follows a cohort of patients aged $a_0$ = 25 for $T$ = 70 yearly cycles (cycle length $\tau$ = 1 year), so in cycle $t = 0, 1, \dots, T-1$ they are aged $a_t = a_0 + t\tau$. Each of the five drugs is the first-line drug $j_1$ of a treatment sequence. The second-line drug $j_2$ is risperidone after chlorpromazine or haloperidol, and haloperidol after quetiapine, risperidone or olanzapine. Fluphenazine decanoate (FLU) is the third line for everyone.
 
-$$\text{Cost} = \sum_{t=0}^{T-1} \frac{1}{(1+r)^{t}} \sum_{s} \pi_{t,s}\, C_s$$
+### States and transitions
 
-**Side effects.** On drug $j$, the probability of extrapyramidal symptoms (EPS) comes from the odds ratio against placebo, and the probability of diabetes from the relative risk against haloperidol:
+| State | In `mtrace()` | Description |
+|---|---|---|
+| $\text{R}_1$, $\text{R}_2$, $\text{R}_3$ | 1, 2, 3 | Residual phase on the first-line drug, the second-line drug, or fluphenazine decanoate |
+| $\text{S}_1$, $\text{S}_2$ | 4, 5 | Residual phase after stopping the first- or second-line drug (untreated) |
+| $\text{A}'_1$, $\text{A}'_2$ | 6, 7 | Relapse after stopping the first- or second-line drug |
+| $\text{A}_1$, $\text{A}_2$ | 8, 9 | Relapse while on the first- or second-line drug |
+| $\text{D}$ | 10 | Dead |
+
+Each year, a patient in the residual phase on drug $j$ relapses with probability $x^{\text{rel}}_j$, switches to the next drug because of side effects ($x^{\text{AE}}_j$) or lack of efficacy ($x^{\text{eff}}_j$), stops for other reasons ($x^{\text{oth}}_j$), or continues ($x^{\text{cont}}_j$). For each drug these five come from the same trial counts and add up to 1. Patients who have stopped treatment relapse with probability $x^{\text{rel}}_0$. Relapses are treated in hospital and remit with probability $\rho$: after a relapse off treatment the patient restarts the same drug, and after a relapse on treatment moves to the next one. Every living patient dies with probability $q_t$ in cycle $t$, whatever their state, and the rest stay where they are. For lines $\ell$ = 1 and 2:
+
+$$P_t(\text{R}_\ell, \text{R}_{\ell+1}) = x^{\text{AE}}_{j_\ell} + x^{\text{eff}}_{j_\ell} \qquad P_t(\text{R}_\ell, \text{S}_\ell) = x^{\text{oth}}_{j_\ell} \qquad P_t(\text{R}_\ell, \text{A}_\ell) = x^{\text{rel}}_{j_\ell}$$
+
+$$P_t(\text{S}_\ell, \text{A}'_\ell) = x^{\text{rel}}_0 \qquad P_t(\text{A}'_\ell, \text{R}_\ell) = \rho \qquad P_t(\text{A}_\ell, \text{R}_{\ell+1}) = \rho$$
+
+$$P_t(s, \text{D}) = q_t \ \ (s \ne \text{D}) \qquad P_t(s, s) = 1 - \sum_{s' \ne s} P_t(s, s') \qquad P_t(\text{D}, \text{D}) = 1$$
+
+So a patient stays on drug $j_\ell$ with probability $x^{\text{cont}}_{j_\ell} - q_t$, and stays on fluphenazine decanoate until death. Everyone starts in $\text{R}_1$, and the cohort trace $\pi_t$ (a row vector of the share of the cohort in each state) moves one cycle at a time:
+
+$$\pi_0 = (1, 0, \dots, 0) \qquad \pi_{t+1} = \pi_t\, P_t$$
+
+### Deaths
+
+The WHO life table for Uganda gives ${}_5q_x$, the probability of dying within the 5-year age group that starts at age $x$, which is converted to a yearly probability. Deaths from schizophrenia, $q^{\text{SZ}}_x$ (WHO 2008 deaths by cause, in wider age groups), are used as yearly probabilities. A patient dies of one cause or the other, with each table read at the age group that contains $a_t$:
+
+$$q^{\text{pop}}_x = 1 - (1 - {}_5q_x)^{1/5} \qquad q_t = q^{\text{pop}}_{a_t} + q^{\text{SZ}}_{a_t} - q^{\text{pop}}_{a_t}\, q^{\text{SZ}}_{a_t}$$
+
+### Side effects
+
+On drug $j$, the probability of extrapyramidal symptoms (EPS) comes from the odds ratio against placebo, and the probability of diabetes from the relative risk against haloperidol:
 
 $$\text{EPS}_j = \frac{\text{OR}_j\, p_0}{1 - p_0 + \text{OR}_j\, p_0} \qquad \text{DM}_j = p_{\text{DM}}\, \text{RR}_j$$
+
+### DALYs
+
+Each year, the patients who died in the previous cycle lose the life expectancy $e(a_t)$ at their age (from the same life table), and the living accrue the disability weight $w_s$ of their state. Both are discounted at rate $r_{\text{O}}$:
+
+$$\text{YLL}_t = q_{t-1}\, e(a_t) \sum_{s \ne \text{D}} \pi_{t-1,s} \ \ (\text{YLL}_0 = 0) \qquad \text{YLD}_t = \sum_s \pi_{t,s}\, w_s \qquad \text{DALYs} = \sum_{t=0}^{T-1} \frac{\text{YLL}_t + \text{YLD}_t}{(1 + r_{\text{O}})^{t}}$$
+
+A state's disability weight is that of its phase (residual or acute) plus the expected disability from side effects: weight gain (with probability $p^{\text{wt}}_j$), EPS (for $\delta_{\text{EPS}}$ years) and diabetes. Patients who have stopped treatment have no side effects, and in hospital every patient is on chlorpromazine:
+
+$$w_{\text{R}_\ell} = W_{\text{res}} + p^{\text{wt}}_{j_\ell} W_{\text{wt}} + \text{EPS}_{j_\ell}\, \delta_{\text{EPS}}\, W_{\text{EPS}} + \text{DM}_{j_\ell} W_{\text{DM}} \qquad w_{\text{R}_3} = W_{\text{res}} + p^{\text{wt}}_{\text{FLU}} W_{\text{wt}} + \text{EPS}_{\text{FLU}}\, \delta_{\text{EPS}}\, W_{\text{EPS}} + p_{\text{DM,FLU}} W_{\text{DM}}$$
+
+$$w_{\text{S}_\ell} = W_{\text{res}} \qquad w_{\text{A}} = W_{\text{acute}} + p^{\text{wt}}_{\text{CPZ}} W_{\text{wt}} + \text{EPS}_{\text{CPZ}}\, \delta_{\text{EPS}}\, W_{\text{EPS}} + \text{DM}_{\text{CPZ}} W_{\text{DM}} \qquad w_{\text{D}} = 0$$
+
+where $w_{\text{A}}$ is the weight of all four relapse states, and the disability from diabetes includes its complications:
+
+$$W_{\text{DM}} = W_{\text{diab}} + p_{\text{neuro}} W_{\text{neuro}} + p_{\text{foot}} W_{\text{foot}} + p_{\text{imp}} W_{\text{imp}} + p_{\text{neph}} W_{\text{neph}}$$
+
+Every living patient has the same probability of dying, so years of life lost are the same for all five drugs, and the drugs differ in DALYs only through disability.
+
+### Costs
+
+Each year a patient's cost depends on their state: $C^{\text{res}}_{j_\ell}$ in $\text{R}_\ell$, $C^{\text{res}}_{\text{FLU}}$ in $\text{R}_3$, $C^{\text{acute}}$ in the four relapse states, and nothing in the stopped states or once dead. Costs are discounted at rate $r_{\text{C}}$:
+
+$$\text{Cost} = \sum_{t=0}^{T-1} \frac{1}{(1+r_{\text{C}})^{t}} \sum_{s} \pi_{t,s}\, C_s$$
 
 **Staff pay.** Each staff member's hourly pay is their annual salary over the hours worked in a year, $h_k = S_k / H$, for psychiatrists (psy), psychiatric clinical officers (co), psychiatric nurses (nu) and pharmacy assistants (ph).
 
@@ -54,24 +106,51 @@ $$C^{\text{res}}_{\text{FLU}} = 12\, c_{\text{FLU}} n_{\text{FLU}} + \text{EPS}_
 
 **Carers** lose a share $\ell$ of their work time (264 work days a year), in hospital and as an outpatient: $C_{\text{carer}} = \lambda (1 - u)\, \text{GDP}\, \tau\, \ell\, \tfrac{264}{365}$. Time off treatment (the stopped states) costs nothing.
 
+### Comparing the drugs
+
+The drugs are compared on the efficiency frontier. A drug is dominated if another costs no more and incurs no more DALYs, and is better on one of the two. The rest are sorted by cost, and a drug is extendedly dominated, and dropped, if its ICER against the drug before it is higher than the ICER of the drug after it; this repeats until the ICERs rise along the frontier. Between neighbours on the frontier:
+
+$$\text{ICER}_k = \frac{\text{Cost}_k - \text{Cost}_{k-1}}{\text{DALYs}_{k-1} - \text{DALYs}_k}$$
+
+### Net benefit and the probability of cost-effectiveness
+
+At a willingness to pay of WTP per DALY averted, a drug's net monetary benefit counts its DALYs as a loss. In the probabilistic analysis, a drug's probability of being cost-effective is the share of the $N$ draws in which it has the highest net benefit (the acceptability curve plots this against WTP):
+
+$$\text{NMB}_j = -\text{WTP} \times \text{DALYs}_j - \text{Cost}_j \qquad P_j(\text{WTP}) = \frac{1}{N} \sum_{n=1}^{N} \mathbf{1}\Big[\text{NMB}^{(n)}_j = \max_i \text{NMB}^{(n)}_i\Big]$$
+
+The one-way analysis compares a drug $I$ with a comparator $K$: the incremental cost $\Delta C = \text{Cost}_I - \text{Cost}_K$, the DALYs averted $\Delta E = \text{DALYs}_K - \text{DALYs}_I$, the ICER $\Delta C / \Delta E$, or the incremental net benefit $\text{WTP} \times \Delta E - \Delta C$. The ICER is shown only when $I$ costs more and averts more; otherwise the run is labelled dominant ($\Delta C \le 0$ and $\Delta E \ge 0$), dominated ($\Delta C \ge 0$ and $\Delta E \le 0$), or cheaper and less effective.
+
+### Sensitivity analyses
+
+In the one-way analysis each parameter is set to its low and its high value. Each transition probability $x_i$ is set to the 2.5% and 97.5% points of its own distribution, $\text{Beta}(\alpha_i, \sum_k \alpha_k - \alpha_i)$, where $\alpha$ are the trial counts of that drug's set, and the others in the set are rescaled so it still adds up to 1: $x_k' = x_k\, (1 - x_i') / (1 - x_i)$.
+
+In the probabilistic analysis, probabilities, proportions and disability weights are drawn from beta distributions; the odds ratios for EPS and relative risks for diabetes from log-normal distributions, with a log-scale standard deviation of $(\ln \text{high} - \ln \text{low}) / 3.92$; costs and prices, staff times, salaries and working hours, GDP per capita, the length of stay, visit frequencies and the carers' lost work time from normal distributions; and each drug's five transition probabilities from a Dirichlet distribution with its trial counts $\alpha$. The age, cycle length, discount rates, EPS duration, ward-round schedule, staff numbers, doses and test frequencies are fixed.
+
 | Symbol | Input in `data_input.xlsx` | Base case |
 |---|---|---|
+| $a_0$; $T$; $\tau$; $r_{\text{C}}$, $r_{\text{O}}$ | `age`; `nCycles` in `R/data_input.R`; `time`; `discCosts`, `discOutcomes` | 25 years; 70 cycles; 1 year; 3%, 3% |
+| $x^{\text{rel}}_j, x^{\text{AE}}_j, x^{\text{eff}}_j, x^{\text{oth}}_j, x^{\text{cont}}_j$ | `pHosp…`, `disAE…`, `disEff…`, `disOther…`, `rem…` for each drug (Transition Probabilities sheet, with the trial counts $\alpha$ in `alpha`) | risperidone, for example: 0.102, 0.069, 0.192, 0.214, 0.423 |
+| $x^{\text{rel}}_0$; $\rho$ | `pHospUntrt`; `pRemitCPZ` | 0.733; 0.788 |
+| ${}_5q_x$; $q^{\text{SZ}}_x$; $e(x)$ | Uganda Life Tables, Schizo Death Probability and Life Expectancy sheets | at age 25: 0.034, 0.0024, 39.1 years |
+| $p_0$; $p_{\text{DM}}$, $p_{\text{DM,FLU}}$; $\text{OR}_j$, $\text{RR}_j$ | `pEPSPLA`; `pDiabetesHAL`, `pDiabetesFLU`; `eps…`, `diab…` for each drug | 0.064; 0.052, 0.06; Table 2 of the paper |
+| $W_{\text{res}}$, $W_{\text{acute}}$; $W_{\text{wt}}$, $p^{\text{wt}}_j$; $W_{\text{EPS}}$, $\delta_{\text{EPS}}$ | `residualDALY`, `acuteDALY`; `disutilWeight`, `pWt…`; `disutilEPS`, `durEPS` | 0.576, 0.756; 0.031, by drug; 0.074, 0.25 years |
+| $W_{\text{diab}}$; $p_{\text{neuro}}, p_{\text{foot}}, p_{\text{imp}}, p_{\text{neph}}$; $W_{\text{neuro}}, W_{\text{foot}}, W_{\text{imp}}, W_{\text{neph}}$ | `dDiabetes`; `pNeuro`, `pFoot`, `pImpotent`, `pNephro`; `dNeuro`, `dFoot`, `dImpotent`, `dNephro` | 0.015; 0.464, 0.040, 0.103, 0.048; 0.099, 0.023, 0.019, 0.105 |
+| WTP | set in the app; the acceptability curves run from 0 to a maximum you choose | $1,641 (three times Uganda's 2012 GDP per capita) |
 | $S_{\text{psy}}, S_{\text{co}}, S_{\text{nu}}, S_{\text{ph}}$; $H$ | `rate_psy`, `rate_pco`, `rate_pno`, `rate_pharm`; `workhours_year` | $5,049, $1,261, $970, $1,087; 2,000 hours |
 | $R_{\text{maj}}, R_{\text{min}}$; $d_{\text{maj}}, d_{\text{min}}$ | `major_week`, `minor_week`; `duration_major`, `duration_minor` | 1 and 2 rounds a week; 20 minutes each |
 | $N^{\text{maj}}_{\text{psy}}, N^{\text{maj}}_{\text{co}}, N^{\text{maj}}_{\text{nu}}$; $N^{\text{min}}_{\text{co}}, N^{\text{min}}_{\text{nu}}$ | `PSY_major`, `PCO_major`, `PNO_major`; `PCO_minor`, `PNO_minor` | 1, 1, 2; 1, 2 |
 | $N_{\text{adm}}$, $d_{\text{adm}}$ | `PNO_drugadmin`, `duration_drugadmin` | 1 nurse, 20 minutes a day |
 | $N_{\text{psy}}, N_{\text{co}}, N_{\text{nu}}, N_{\text{ph}}$; $\sigma_{\text{psy}}, \sigma_{\text{nu}}$ | `PSY`, `PCO`, `nurse`, `pharm`; `PSY_prop`, `nurse_prop` | 1 each; 0.25, 1 |
 | $d_{\text{con}}$, $d_{\text{disp}}$; $V$ | `duration_consult`, `duration_drugdisp`; `visitation_frequency` | 20 and 10 minutes; 1 visit a month |
-| $L$; $\tau$; $r$ | `LOS`; `time`; `discCosts` | 60 days; 1 year; 3% |
+| $L$ | `LOS` | 60 days |
 | $c$ and $f$ for each test; $p_{\text{TPHA}}$ | `FBC_cost`, `FBC_freq`, … `HIV_cost`, `HIV_freq`; `TPHA_proportion` | each test once (a stay in hospital, a cycle as an outpatient); 0.1 |
 | $k_{\text{IP}}$, $k_{\text{OP}}$ | `capital_costs_per_inpatient_per_day`, `capital_costs_per_outpatient_visit` | $8.46 a day, $2.49 a visit |
 | $c_{\text{trip}}$; $p_{\text{carer}}$; $v_{\text{carer}}$ | `averagetravel_cost`; `caregiver_prop`; `caregiver_freq` (per `every` = 7 days) | $2 each way; 0.4; 1 visit a week |
 | $\lambda$, $u$, GDP; $\ell$ | `laborforcerate`, `unemploymentrate`, `GDP_percapita`; `DALY_caretaker` | 0.706, 0.052, $547; 0.25 |
-| $p_0$; $p_{\text{DM}}$, $p_{\text{DM,FLU}}$; $C_{\text{DM}}$ | `pEPSPLA`; `pDiabetesHAL`, `pDiabetesFLU`; `cDiabetes` | 0.064; 0.052, 0.06; $627 a year |
-| $\text{OR}_j$, $\text{RR}_j$; $c_j$, $n_j$ | `eps…`, `diab…`; `…_cost`, `…_qty` for each drug | Table 2 of the paper |
-| $c_{\text{bz}}$, $n_{\text{bz}}$; $\delta_{\text{EPS}}$ | `artane_cost`, `artane_qty`; `durEPS` | $0.016, 1 a day; 0.25 years |
+| $C_{\text{DM}}$; $c_j$, $n_j$ | `cDiabetes`; `…_cost`, `…_qty` for each drug | $627 a year; Table 2 of the paper |
+| $c_{\text{bz}}$, $n_{\text{bz}}$ | `artane_cost`, `artane_qty` | $0.016, 1 a day |
 
-The functions `ip_costs()`, `op_costs()`, `residual_cost()`, `acute_cost()` and `third_line_cost()` in `R/functions.R` follow these equations term by term.
+`mtrace()` and `RunModel()` in `R/functions.R` build the transitions, deaths, DALYs and costs; `state_weight()`, `third_line_weight()`, `ip_costs()`, `op_costs()`, `residual_cost()`, `acute_cost()` and `third_line_cost()` follow the equations for the weights and costs term by term. `IncrementalAnalysis()` finds the frontier, `genProbCE()` and `owsaPair()` work out net benefits, and `getTPbounds()`, `owsa()` and `draw_psa_df()` run the sensitivity analyses.
 
 ## Contents
 
