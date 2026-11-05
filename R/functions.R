@@ -48,6 +48,19 @@ getTPset <- function(data, value) {
     split(stringr::str_extract(names(.), "(CPZ|HAL|OLA|RIS|QUE)$"))
 }
 
+## function to get the low or high value of each transition probability for the one-way analysis
+## INSTRUCTIONS
+# 1) data: the transition probability table (inputs$transitions)
+# 2) q: 0.025 for the low values, 0.975 for the high values
+# each probability's marginal distribution is Beta(a_i, sum(a) - a_i), where a = the counts (alpha)
+# of that drug's set, as in the Dirichlet draws of the PSA; returns a list by drug, like getTPset()
+getTPbounds <- function(data, q) {
+  data %>%
+    filter(dist == "dirichlet") %>%
+    getTPset(value = alpha) %>%
+    lapply(function(a) qbeta(q, a, sum(a) - a))
+}
+
 ## Markov trace, DALYs and costs for one treatment sequence
 # primary, secondary: parameters of the first- and second-line drug, in this order:
 #   c(disAE, disEff, disOther, pHosp, pWt, eps, diab, cost, qty)
@@ -73,13 +86,15 @@ mtrace <- function(primary, secondary, pRemit, p) {
 
     trans[6,1,] <- trans[7,2,] <- trans[8,2,] <- trans[9,3,] <- pRemit
 
-    ## get time varying death probabilities
-    for (i in 1:nCycles) {
-      # insert death probabilities
-      trans[,nStates,i] <- pDie[i]
-      # insert probability of remaining in the same state in each cycle (complement of rowsums)
-      diag(trans[,,i]) <- 1-rowSums(trans[,,i])
-    }
+    ## get time varying death probabilities, for every cycle at once
+    # insert death probabilities: column nStates of each cycle's matrix
+    trans[,nStates,] <- rep(pDie, each = nStates)
+    # row sums of every cycle's matrix, as a [state, cycle] matrix (the diagonal is still 0)
+    rowsums <- colSums(aperm(trans, c(2, 1, 3)))
+    # insert probability of remaining in the same state in each cycle (complement of rowsums)
+    # idx picks the diagonal of every cycle's matrix: [1,1,1], [2,2,1], ..., [nStates,nStates,nCycles]
+    idx <- cbind(rep(1:nStates, nCycles), rep(1:nStates, nCycles), rep(1:nCycles, each = nStates))
+    trans[idx] <- 1 - rowsums
     # set absorbing state (death) probability to 1
     trans[nStates,nStates,] <- 1
 
@@ -91,13 +106,9 @@ mtrace <- function(primary, secondary, pRemit, p) {
       pop.trace[c, ] <- pop.trace[c-1, ] %*% trans[,,c-1]
     }
 
-    # calculate YLL
+    # calculate YLL: in cycle i, those alive in cycle i-1 times pDie[i-1] times expLife[i] (none in cycle 1)
     int.YLL <- rowSums(pop.trace[,1:9])
-    YLL <- numeric()
-    YLL[1] <- 0
-    for (i in 2:nCycles) {
-      YLL[i] <- int.YLL[i-1] * expLife[i] * pDie[i-1]
-    }
+    YLL <- c(0, int.YLL[-nCycles] * expLife[-1] * pDie[-nCycles])
 
     # calculate vector of utilities then count the DALYs
     res.1st.line <- residualDALY + disutilWeight * primary[5] + eps.risk(pEPSPLA,primary[6]) * durEPS * disutilEPS + diab.risk(pDiabetesHAL,primary[7]) * disutilDIAB
@@ -110,16 +121,12 @@ mtrace <- function(primary, secondary, pRemit, p) {
     YLD <- pop.trace %*% utils.vec
     DALYS <- discFactOutcomes * (YLL + YLD)
 
-    YLD.trace <- cbind(pop.trace[,1] * res.1st.line, pop.trace[,2] * res.2nd.line, pop.trace[,3] * res.3rd.line, pop.trace[,4] * res.off.1st.line, pop.trace[,5] * res.off.2nd.line, pop.trace[,6] * ac.off.1st.line, pop.trace[,7] * ac.off.1st.line, pop.trace[,8] * ac.off.1st.line, pop.trace[,9] * ac.off.1st.line)
-
     # calculate vector of costs and compute total costs
     c.res.1st <- op.drug.costs(primary[8], primary[9]) + eps.risk(pEPSPLA,primary[6]) * op.drug.costs(artane_cost, artane_qty) * durEPS + diab.risk(pDiabetesHAL,primary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
     c.res.2nd <- op.drug.costs(secondary[8], secondary[9]) + eps.risk(pEPSPLA,secondary[6]) * op.drug.costs(artane_cost, artane_qty) * durEPS + diab.risk(pDiabetesHAL,secondary[7]) * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
     c.res.3rd <- fluphenazine_cost * fluphenazine_qty * 12 + eps.risk(pEPSPLA,epsFLU) * op.drug.costs(artane_cost, artane_qty) * durEPS + pDiabetesFLU * cDiabetes + op.personnel.costs + op.lab.costs + op.capital.costs + op.carer.travel.costs + op.patient.travel.costs + op.indirect + carer.indirect
     c.res.off.1st <- c.res.off.2nd <- 0
     c.ac.off.1st <- c.ac.off.2nd <- c.ac.was.on.1st <- c.ac.was.on.2nd <- ip.drug.costs(chlorpromazine_cost, chlorpromazine_qty, LOS) + eps.risk(pEPSPLA,epsCPZ) * ip.drug.costs(artane_cost, artane_qty, LOS) + diab.risk(pDiabetesHAL,diabCPZ) * cDiabetes + ip.personnel.costs + ip.lab.costs + ip.capital.costs + ip.carer.travel.costs + ip.patient.travel.costs + ip.indirect + carer.indirect
-
-    cost.trace <- cbind(pop.trace[,1] * c.res.1st, pop.trace[,2] * c.res.2nd, pop.trace[,3] * c.res.3rd, pop.trace[,4] * c.res.off.1st, pop.trace[,5] * c.res.off.2nd, pop.trace[,6] * c.ac.off.1st, pop.trace[,7] * c.ac.off.2nd, pop.trace[,8] * c.ac.was.on.1st, pop.trace[,9] * c.ac.was.on.2nd)
 
     cost.vec <- c(c.res.1st, c.res.2nd, c.res.3rd, c.res.off.1st, c.res.off.2nd, c.ac.off.1st, c.ac.off.2nd, c.ac.was.on.1st, c.ac.was.on.2nd, 0)
 
@@ -337,118 +344,134 @@ ScatterPlot <- function(FrontierAnalysis) {
 }
 
 
-## loop through base-case, high and low values and calculate model
-# function requires user to have run the incremental analysis, if not, ---> stop, ask user to run basecase first
-# run incremental within the function and extract the things we need
+## function to set one probability of a drug's transition set and rescale the others proportionally,
+## so the set still sums to 1
+## INSTRUCTIONS
+# 1) shares: named vector of the base-case probabilities in one set (sums to 1)
+# 2) n: name of the probability to change
+# 3) value: its new value
+rebalance <- function(shares, n, value) {
+  others <- names(shares) != n
+  shares[others] <- shares[others] * (1 - value) / (1 - shares[n])
+  shares[n] <- value
+  return(shares)
+}
+
+
+## function to run the one-way sensitivity analysis
+## INSTRUCTIONS
+# 1) model: the base-case model object from RunModel()
+# 2) low_base, high_base: low and high values of the parameters, from getparms()
+# 3) low_transitions, high_transitions: low and high value of each transition probability, by drug,
+#    from getTPbounds()
+# each run starts from a fresh copy of the base case with one variable changed, and keeps the costs
+# and outcomes of every drug; owsaPair() then picks the drugs and the result to show
 owsa <- function(model, 
                  low_base, low_transitions, 
-                 high_base, high_transitions, 
-                 outcome, 
-                 intervention,
-                 comparator) {
+                 high_base, high_transitions) {
+  
+  # get the base-case inputs from the model object
+  baseparms <- model$baseparms
+  basetransitions <- model$basetransitions
+  base <- c(baseparms, basetransitions)
+  
+  # 1) task list: for each variable, the values that change in its low run and in its high run
+  # a parameter changes only itself
+  baseTasks <- lapply(names(low_base), function(n) {
+    list(varname = n, low = low_base[n], high = high_base[n])
+  })
+  
+  # a transition probability changes its drug's whole set: itself, and the others rescaled
+  transitionTasks <- lapply(names(low_transitions), function(s) {
+    shares <- basetransitions[names(low_transitions[[s]])]   # base-case probabilities for this drug
+    lapply(names(shares), function(n) {
+      list(varname = n,
+           low  = rebalance(shares, n, low_transitions[[s]][n]),
+           high = rebalance(shares, n, high_transitions[[s]][n]))
+    })
+  })
+  
+  # one list of tasks: parameters, then every transition probability of every drug
+  tasks <- c(baseTasks, unlist(transitionTasks, recursive = FALSE))
+  
+  # 2) costs and outcomes of every drug from one run
+  runLive <- function(live) {
+    res <- RunModel(model$inputs,
+                    baseparms = live[names(baseparms)],
+                    basetransitions = live[names(basetransitions)],
+                    DALYs = model$DALYs)
+    list(costs = setNames(res$ce_result$costs, res$ce_result$intervention),
+         outcomes = setNames(res$ce_result$outcomes, res$ce_result$intervention))
+  }
+  
+  # 3) run each task: a fresh copy of the base case for its low run and for its high run
+  results <- lapply(seq_along(tasks), function(i) {
+    task <- tasks[[i]]
+    message("Running DSA on ", task$varname, ", variable ", i, " of ", length(tasks))
+    # a misspelled name would otherwise be added to live silently
+    stopifnot(all(c(names(task$low), names(task$high)) %in% names(base)))
+    
+    live_low <- base
+    live_low[names(task$low)] <- task$low
+    
+    live_high <- base
+    live_high[names(task$high)] <- task$high
+    
+    list(low = runLive(live_low), high = runLive(live_high))
+  })
+  
+  # 4) one matrix per result: a row per variable, a column per drug
+  varnames <- sapply(tasks, function(task) task$varname)
+  collect <- function(run, what) {
+    out <- do.call(rbind, lapply(results, function(r) r[[run]][[what]]))
+    rownames(out) <- varnames
+    return(out)
+  }
+  
+  basecase <- runLive(base)
+  
+  return(list(variable = varnames,
+              low_in = sapply(tasks, function(task) task$low[[task$varname]]),
+              high_in = sapply(tasks, function(task) task$high[[task$varname]]),
+              costs_low = collect("low", "costs"), costs_high = collect("high", "costs"),
+              outcomes_low = collect("low", "outcomes"), outcomes_high = collect("high", "outcomes"),
+              costs_base = basecase$costs, outcomes_base = basecase$outcomes,
+              DALYs = model$DALYs))
+  
+}
 
+
+## function to pick one result of the one-way analysis: intervention versus comparator
+## INSTRUCTIONS
+# 1) owsa_res: output of owsa()
+# 2) outcome: "cost" (incremental cost), "outcome" (DALYs averted / QALYs gained) or "ICER"
+# 3) intervention, comparator: two of the drugs
+# returns the table TornadoPlot() uses; no model runs, so it is instant
+owsaPair <- function(owsa_res, outcome, intervention, comparator) {
+  
   # Result of interest: `intervention` versus `comparator` --
-  # incremental cost ("cost"), DALYs averted / QALYs gained ("outcome") or ICER ("ICER")
-  pairwise <- function(m) {
-    r  <- m$ce_result
-    dc <- r$costs[r$intervention == intervention] - r$costs[r$intervention == comparator]
-    do <- if (m$DALYs) r$outcomes[r$intervention == comparator] - r$outcomes[r$intervention == intervention]
-          else r$outcomes[r$intervention == intervention] - r$outcomes[r$intervention == comparator]
-    switch(outcome, ICER = dc / do, cost = dc, outcome = do)
+  # incremental cost ("cost"), DALYs averted / QALYs gained ("outcome") or ICER ("ICER");
+  # costs and outcomes are matrices with a row per run and a column per drug
+  pairwise <- function(costs, outcomes) {
+    dc <- costs[, intervention] - costs[, comparator]
+    do <- if (owsa_res$DALYs) outcomes[, comparator] - outcomes[, intervention]
+          else outcomes[, intervention] - outcomes[, comparator]
+    unname(switch(outcome, ICER = dc / do, cost = dc, outcome = do))
   }
   
-  # generate base case from model object
-  base_case <- RunModel(model$inputs,
-                        baseparms = model$baseparms, 
-                        basetransitions = model$basetransitions,
-                        DALYs = model$DALYs)
+  base.case <- pairwise(rbind(owsa_res$costs_base), rbind(owsa_res$outcomes_base))
+  low <- pairwise(owsa_res$costs_low, owsa_res$outcomes_low)
+  high <- pairwise(owsa_res$costs_high, owsa_res$outcomes_high)
   
-  base.case <- pairwise(base_case)
-  
-  # set up matrix to collect the results
-  owsamat <- matrix(NA,
-                    nrow = length(low_base) + length(low_transitions),
-                    ncol=2,
-                    dimnames=list(c(names(low_base), names(low_transitions)),
-                                  c("low", "high")))
-  
-  lowinputs <- low_base
-  highinputs <- high_base
-  owsavars <- c(paste0(names(low_base), " (", sprintf(lowinputs, fmt = "%#.2f"),", ", sprintf(highinputs, fmt = "%#.2f"),")"),
-                paste0("TP set - ", names(low_transitions)))
-  
-  i=0
-  # set all live values to the base case
-  live <- model$baseparms
-  for (n in names(lowinputs)) {
-    i=i+1
-    # counter
-    message("Running DSA on ", n, ", variable ", i, " of ", length(names(lowinputs)))
-    # replace the current parameter with its low value and run the model
-    low.input <- lowinputs[n]
-    live[n] <- low.input
-    dsa.low <- RunModel(model$inputs,
-                        baseparms = live, 
-                        basetransitions = model$basetransitions,
-                        DALYs = model$DALYs)
-    low_val <- pairwise(dsa.low)
-    
-    # replace the current parameter with its high value and run the model
-    high.input <- highinputs[n]
-    live[n] <- high.input
-    dsa.high <- RunModel(model$inputs,
-                         baseparms = live, 
-                         basetransitions = model$basetransitions,
-                         DALYs = model$DALYs)
-    high_val <- pairwise(dsa.high)
-    
-    owsamat[i,] <- c(low_val, high_val)
-
-    # reset to the original value
-    live[n] <- model$baseparms[n]
-  }
-  
-  # do the same for the transition probabilities, but put all in at once
-  # set all live values to the base case, the 4th element of list returned by the RunModel function
-  live <- model$basetransitions
-  
-  for (i in 1:length(low_transitions)) {
-
-    message("Running DSA on TP set for ", names(low_transitions)[i])
-    
-    # replace the current parameter-set with its low value and run the model
-    low.input <- low_transitions[[i]]
-    live[names(low_transitions[[i]])] <- low.input
-    
-    dsa.low <- RunModel(model$inputs,
-                        baseparms = model$baseparms, 
-                        basetransitions = live,
-                        DALYs = model$DALYs)
-    low_val <- pairwise(dsa.low)
-    
-    # replace the current parameter-set with its high value and run the model
-    high.input <- high_transitions[[i]]
-    live[names(high_transitions[[i]])] <- high.input
-    dsa.high <- RunModel(model$inputs,
-                         baseparms = model$baseparms, 
-                         basetransitions = live,
-                         DALYs = model$DALYs)
-    high_val <- pairwise(dsa.high)
-
-    owsamat[i+length(low_base), ] <- c(low_val, high_val)
-    
-    # reset to the original value in basetransitions
-    live[names(high_transitions[[i]])] <- model$basetransitions[names(high_transitions[[i]])]
-    
-  }
+  owsavars <- paste0(owsa_res$variable, " (", sprintf(owsa_res$low_in, fmt = "%#.2f"), ", ",
+                     sprintf(owsa_res$high_in, fmt = "%#.2f"), ")")
   
   # post processing of data to return full results
-  owsa_tab <- as_tibble(owsamat) %>%
-    add_column(variable = owsavars, .before = "low") %>%
+  owsa_tab <- tibble(variable = owsavars, low = low, high = high) %>%
     mutate(range = abs(high - low), high_val = high - base.case, low_val = low - base.case) %>%
     arrange(range)
   
-  return(list(owsa_data = owsa_tab, owsa_outcome = outcome, owsa_basecase = base.case, DALYs = model$DALYs))
+  return(list(owsa_data = owsa_tab, owsa_outcome = outcome, owsa_basecase = base.case, DALYs = owsa_res$DALYs))
   
 }
 

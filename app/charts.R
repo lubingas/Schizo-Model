@@ -83,14 +83,13 @@ owsa_axis_title <- function(outcome, drug, comp) {
          ICER = sprintf("Cost per DALY averted, %s compared with %s (US$)", tolower(drug), tolower(comp)))
 }
 
-# owsa(): output of owsa(); info: table with code, label, low_in, high_in for every row
+# ow: output of owsaPair(); info: table with code, label, low_in, high_in for every row
 tornado_data <- function(ow, info, n, max_chars = 46) {
   d <- ow$owsa_data
   d$code <- sub(" \\(.*$", "", d$variable)
-  d$code <- sub("^TP set - ", "TP:", d$code)
   d <- dplyr::left_join(d, info, by = "code")
   d <- d[order(-d$range), ][seq_len(min(n, nrow(d))), ]
-  lab <- if (max_chars < 30) sub("^Transition probabilities,", "Transitions,", d$label) else d$label
+  lab <- d$label
   d$label_short <- ifelse(nchar(lab) > max_chars, paste0(substr(lab, 1, max_chars - 2), "…"), lab)
   d$label_short <- make.unique(d$label_short, sep = " ")
   d[rev(seq_len(nrow(d))), ]       # largest effect at the top

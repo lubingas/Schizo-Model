@@ -30,16 +30,18 @@ CEAnalysis <- IncrementalAnalysis(model = base_case)
 ScatterPlot(CEAnalysis)
 
 ## ONE WAY SENSITIVITY ANALYSES
-# iterate over variables and perform OWSA
+# iterate over variables and perform OWSA (keeps costs and DALYs of every drug)
 dsa_res <- owsa(model = base_case,
                 low_base = getparms(inputs$parameters, value = low),
-                low_transitions = getTPset(inputs$transitions, value = low),
+                low_transitions = getTPbounds(inputs$transitions, 0.025),
                 high_base = getparms(inputs$parameters, value = high),
-                high_transitions = getTPset(inputs$transitions, value = high),
-                outcome = "cost", intervention = "Haloperidol", comparator = "Chlorpromazine")
+                high_transitions = getTPbounds(inputs$transitions, 0.975))
+
+# pick the drugs and the result to show
+dsa_pair <- owsaPair(dsa_res, outcome = "cost", intervention = "Haloperidol", comparator = "Chlorpromazine")
 
 # plot OWSA
-TornadoPlot(owsa_list = dsa_res, max_vars = 30)
+TornadoPlot(owsa_list = dsa_pair, max_vars = 30)
 
 
 ## PSA

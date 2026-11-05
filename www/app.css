@@ -199,7 +199,7 @@ a:hover { color: #104281; }
 .ed-errors { color: var(--error-ink); background: var(--error-bg); border-radius: var(--radius-sm); padding: 0.55rem 0.8rem; font-size: 0.9rem; margin-bottom: 0.75rem; }
 .ed-errors ul { margin: 0; padding-left: 1.1rem; }
 .ed-derived { font-size: 0.9rem; color: var(--ink-2); background: var(--wash); border-radius: var(--radius-sm); padding: 0.55rem 0.8rem; }
-.tp-grid { display: grid; grid-template-columns: minmax(150px, 1.4fr) repeat(4, minmax(80px, 1fr)); gap: 0.4rem 0.6rem; align-items: center; }
+.tp-grid { display: grid; grid-template-columns: minmax(150px, 1.4fr) repeat(2, minmax(80px, 1fr)); gap: 0.4rem 0.6rem; align-items: center; }
 .tp-grid .tp-head { font-weight: 600; font-size: 0.82rem; color: var(--ink-2); }
 .tp-grid .form-group, .tp-grid .shiny-input-container { width: 100% !important; margin: 0; }
 .tp-grid .tp-label { font-size: 0.9rem; }

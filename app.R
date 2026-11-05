@@ -110,7 +110,8 @@ inputs_panel <- nav_panel(
     nav_panel("Transition probabilities", value = "tps",
               p(class = "tab-intro",
                 "Each year, a person in the residual phase on a first- or second-line drug either relapses, switches drug, ",
-                "stops treatment or stays stable. Select a drug to edit its five probabilities together."),
+                "stops treatment or stays stable. Select a drug to edit its five probabilities and counts together. ",
+                "The one-way range of each probability comes from its count."),
               reactableOutput("tbl_tps")),
     nav_panel("Mortality and life expectancy", value = "mort",
               p(class = "tab-intro",
@@ -169,7 +170,9 @@ oneway_panel <- nav_panel(
         actionButton("ow_run", "Run the one-way analysis", class = "btn-primary")),
     p(class = "small-print", style = "margin: 0.8rem 0 0;",
       "Each input moves to its low and then its high value while every other input stays at its base case. ",
-      "Each drug's transition probabilities move together as one set."))),
+      "Each transition probability moves between the 2.5% and 97.5% points of its distribution from the trial counts, ",
+      "and that drug's other transition probabilities are rescaled so they still add up to 1. ",
+      "After a run, change the drugs or the result to see them straight away."))),
   uiOutput("ow_stale"),
   card(card_header(uiOutput("ow_title")), card_body(uiOutput("ow_body")))
 )
@@ -521,8 +524,11 @@ server <- function(input, output, session) {
     keep <- which(!is.na(t$variable) & t$dist %in% "dirichlet")
     code <- stringr::str_extract(t$variable[keep], "(CPZ|HAL|OLA|RIS|QUE)$")
     drug <- names(drug_code)[match(code, drug_code)]
+    # one-way range of each probability, from the counts (see getTPbounds)
+    ow_low <- unlist(unname(getTPbounds(t, 0.025))); ow_high <- unlist(unname(getTPbounds(t, 0.975)))
     d <- data.frame(row_id = keep, drug = factor(drug, levels = drug_order), what = tp_label(t$variable[keep]),
-                    code = t$variable[keep], basecase = t$basecase[keep], low = t$low[keep], high = t$high[keep],
+                    code = t$variable[keep], basecase = t$basecase[keep], low = unname(ow_low[t$variable[keep]]),
+                    high = unname(ow_high[t$variable[keep]]),
                     alpha = t$alpha[keep], edited = ed[keep], drug_name = drug, stringsAsFactors = FALSE)
     d <- d[order(d$drug, d$row_id), ]
     reactable(
@@ -536,8 +542,8 @@ server <- function(input, output, session) {
           div(class = "param-name", div(v), div(class = "param-meta", tags$span(class = "var-code", d$code[i]),
                                                   if (isTRUE(d$edited[i])) tags$span(class = "chip chip-edited", "edited")))),
         basecase = colDef(name = "Base case", align = "right", cell = function(v) fmt_val(v), class = "num"),
-        low = colDef(name = "Low set", align = "right", cell = function(v) fmt_val(v), class = "num"),
-        high = colDef(name = "High set", align = "right", cell = function(v) fmt_val(v), class = "num"),
+        low = colDef(name = "One-way low", align = "right", cell = function(v) fmt_val(v), class = "num"),
+        high = colDef(name = "One-way high", align = "right", cell = function(v) fmt_val(v), class = "num"),
         alpha = colDef(name = "Count", align = "right", cell = function(v) fmt_val(v), class = "num"),
         edited = colDef(name = "", width = 80, sortable = FALSE, align = "right",
                         cell = function(v, i) edit_button("tp_click", paste0("'", d$drug_name[i], "'"),
@@ -549,21 +555,21 @@ server <- function(input, output, session) {
     t <- rv$inputs$transitions
     idx <- which(!is.na(t$variable) & t$dist %in% "dirichlet" & grepl(paste0(drug_code[[drug]], "$"), t$variable))
     rv$tp_rows <- idx; rv$tp_drug <- drug
-    showModal(tp_modal(drug, shown_row(t[idx, ], c("basecase", "low", "high", "alpha")), edited = any(edits()$transitions[idx])))
+    showModal(tp_modal(drug, shown_row(t[idx, ], c("basecase", "alpha")), edited = any(edits()$transitions[idx])))
   })
   tp_vals <- reactive({
     n <- length(rv$tp_rows); req(n > 0)
     o <- rv$inputs$transitions[rv$tp_rows, ]
     g <- function(pre, col) vapply(seq_len(n), function(k) {
       z <- input[[paste0(pre, k)]]; if (is.null(z)) NA_real_ else keep_orig(as.numeric(z), o[[col]][k]) }, numeric(1))
-    list(base = g("tp_base_", "basecase"), low = g("tp_low_", "low"), high = g("tp_high_", "high"), alpha = g("tp_alpha_", "alpha"))
+    list(base = g("tp_base_", "basecase"), alpha = g("tp_alpha_", "alpha"))
   })
   tp_sum_ui <- function(nm) renderUI({
     s <- sum(tp_vals()[[nm]])
     bad <- is.na(s) || abs(s - 1) > 0.001
     div(class = paste("tp-sum", if (bad) "bad"), if (is.na(s)) "–" else formatC(s, format = "f", digits = 4))
   })
-  output$tp_sum_base <- tp_sum_ui("base"); output$tp_sum_low <- tp_sum_ui("low"); output$tp_sum_high <- tp_sum_ui("high")
+  output$tp_sum_base <- tp_sum_ui("base")
   tp_errors <- reactive(check_tp(tp_vals()))
   output$tp_feedback <- renderUI({
     e <- tp_errors()
@@ -578,8 +584,7 @@ server <- function(input, output, session) {
   observeEvent(input$tp_save, {
     if (length(tp_errors())) return()
     v <- tp_vals(); idx <- rv$tp_rows; x <- rv$inputs
-    x$transitions$basecase[idx] <- v$base; x$transitions$low[idx] <- v$low
-    x$transitions$high[idx] <- v$high; x$transitions$alpha[idx] <- v$alpha
+    x$transitions$basecase[idx] <- v$base; x$transitions$alpha[idx] <- v$alpha
     rv$inputs <- x
     removeModal()
     showNotification(sprintf("Saved the transition probabilities for %s.", tolower(rv$tp_drug)), type = "message")
@@ -684,60 +689,69 @@ server <- function(input, output, session) {
   output$plane <- renderPlotly(plane_chart(model_ok(), session$clientData$output_plane_width %||% 1000))
 
   # ── One-way analysis ───────────────────────────────────────────────────────
+  # the runs keep the costs and DALYs of every drug, so changing the drugs or the result
+  # only re-picks from them (owsaPair); only a change of inputs needs a new run
   ow_state <- reactiveVal(NULL)
   run_owsa <- function() {
     m <- model()
     if (inherits(m, "error")) return(showNotification("Fix the inputs first: the model can't run with them.", type = "error"))
-    drug <- input$ow_drug; comp <- input$ow_comp; outcome <- input$ow_outcome
-    if (identical(drug, comp)) return(showNotification("Choose two different drugs.", type = "warning"))
     inp <- rv$inputs
     lb <- getparms(inp$parameters, value = low);  hb <- getparms(inp$parameters, value = high)
-    lt <- getTPset(inp$transitions, value = low); ht <- getTPset(inp$transitions, value = high)
-    n <- length(lb) + length(lt)
+    lt <- getTPbounds(inp$transitions, 0.025); ht <- getTPbounds(inp$transitions, 0.975)
+    n <- length(lb) + length(unlist(lt))
     res <- withProgress(message = "Running the one-way analysis", value = 0, {
       withCallingHandlers(
-        owsa(m, low_base = lb, low_transitions = lt, high_base = hb, high_transitions = ht,
-             outcome = outcome, intervention = drug, comparator = comp),
+        owsa(m, low_base = lb, low_transitions = lt, high_base = hb, high_transitions = ht),
         message = function(cnd) { incProgress(1 / n); invokeRestart("muffleMessage") })
     })
+    tp_low <- unlist(unname(lt)); tp_high <- unlist(unname(ht))
+    tp_drug <- names(drug_code)[match(stringr::str_extract(names(tp_low), "(CPZ|HAL|OLA|RIS|QUE)$"), drug_code)]
     info <- rbind(
       data.frame(code = names(lb), label = inp$parameters$Parameter[match(names(lb), inp$parameters$variable)],
                  low_in = fmt_val(lb), high_in = fmt_val(hb[names(lb)]), stringsAsFactors = FALSE),
-      data.frame(code = paste0("TP:", names(lt)),
-                 label = paste("Transition probabilities,", tolower(names(drug_code)[match(names(lt), drug_code)])),
-                 low_in = "low set", high_in = "high set", stringsAsFactors = FALSE))
-    ow_state(list(res = res, info = info, inputs = inp, drug = drug, comp = comp, outcome = outcome))
+      data.frame(code = names(tp_low), label = paste0(tp_drug, ": ", tolower(tp_label(names(tp_low)))),
+                 low_in = fmt_val(tp_low), high_in = fmt_val(tp_high[names(tp_low)]), stringsAsFactors = FALSE))
+    ow_state(list(res = res, info = info, inputs = inp))
   }
   observeEvent(input$ow_run, run_owsa())
 
+  # the chosen drugs and result, picked from the stored runs
+  ow_pair <- reactive({
+    s <- ow_state(); req(s)
+    validate(need(input$ow_drug != input$ow_comp, "Choose two different drugs."))
+    owsaPair(s$res, input$ow_outcome, input$ow_drug, input$ow_comp)
+  })
+
   output$ow_stale <- renderUI({
     s <- ow_state(); if (is.null(s)) return(NULL)
-    changed <- !identical(s$inputs, rv$inputs) || s$drug != input$ow_drug || s$comp != input$ow_comp || s$outcome != input$ow_outcome
-    if (changed) div(class = "note note-stale", "The inputs or choices have changed since this run. Run the one-way analysis again to update it.")
+    if (!identical(s$inputs, rv$inputs)) div(class = "note note-stale", "The inputs have changed since this run. Run the one-way analysis again to update it.")
   })
   output$ow_title <- renderUI({
-    s <- ow_state(); if (is.null(s)) return(h2("One-way sensitivity analysis"))
-    what <- switch(s$outcome, cost = "incremental cost", outcome = "DALYs averted", ICER = "cost per DALY averted")
-    tagList(h2(sprintf("What moves the %s of %s compared with %s", what, tolower(s$drug), tolower(s$comp))),
+    s <- ow_state(); if (is.null(s) || input$ow_drug == input$ow_comp) return(h2("One-way sensitivity analysis"))
+    ow <- ow_pair()
+    what <- switch(input$ow_outcome, cost = "incremental cost", outcome = "DALYs averted", ICER = "cost per DALY averted")
+    tagList(h2(sprintf("What moves the %s of %s compared with %s", what, tolower(input$ow_drug), tolower(input$ow_comp))),
             p(class = "card-sub", sprintf("The %s inputs with the largest effect, out of %s. The vertical line is the base case: %s.",
-                                          min(input$ow_n, nrow(s$res$owsa_data)), nrow(s$res$owsa_data),
-                                          owsa_value_fmt(s$outcome)(s$res$owsa_basecase))))
+                                          min(input$ow_n, nrow(ow$owsa_data)), nrow(ow$owsa_data),
+                                          owsa_value_fmt(input$ow_outcome)(ow$owsa_basecase))))
   })
   output$ow_body <- renderUI({
     s <- ow_state()
     if (is.null(s)) return(div(class = "empty-state", p("Run the one-way analysis to see which inputs move the result most.")))
-    n <- min(input$ow_n, nrow(s$res$owsa_data))
+    if (input$ow_drug == input$ow_comp) return(div(class = "empty-state", p("Choose two different drugs.")))
+    n <- min(input$ow_n, length(s$res$variable))
     tagList(plotlyOutput("tornado", height = paste0(105 + 28 * n, "px")),
             tags$details(style = "margin-top: 0.8rem;", tags$summary("Show as a table"), reactableOutput("ow_table")))
   })
   output$tornado <- renderPlotly({
     s <- ow_state(); req(s)
-    tornado_chart(s$res, s$info, input$ow_n, s$outcome, s$drug, s$comp, session$clientData$output_tornado_width %||% 1000)
+    tornado_chart(ow_pair(), s$info, input$ow_n, input$ow_outcome, input$ow_drug, input$ow_comp,
+                  session$clientData$output_tornado_width %||% 1000)
   })
   output$ow_table <- renderReactable({
     s <- ow_state(); req(s)
-    d <- tornado_data(s$res, s$info, input$ow_n); d <- d[rev(seq_len(nrow(d))), ]
-    f <- owsa_value_fmt(s$outcome)
+    d <- tornado_data(ow_pair(), s$info, input$ow_n); d <- d[rev(seq_len(nrow(d))), ]
+    f <- owsa_value_fmt(input$ow_outcome)
     reactable(data.frame(Input = d$label, `Low input` = d$low_in, `Result at low` = f(d$low),
                          `High input` = d$high_in, `Result at high` = f(d$high), check.names = FALSE),
               theme = rt_theme, pagination = FALSE, compact = TRUE, sortable = FALSE,

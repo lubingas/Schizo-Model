@@ -45,22 +45,20 @@ tp_modal <- function(drug, rows, edited) {
   cells <- lapply(seq_len(n), function(k) {
     tagList(div(class = "tp-label", tp_label(rows$variable[k])),
             numericInput(paste0("tp_base_", k), NULL, rows$basecase[k], min = 0, max = 1, step = 0.01),
-            numericInput(paste0("tp_low_", k), NULL, rows$low[k], min = 0, max = 1, step = 0.01),
-            numericInput(paste0("tp_high_", k), NULL, rows$high[k], min = 0, max = 1, step = 0.01),
             numericInput(paste0("tp_alpha_", k), NULL, rows$alpha[k], min = 0, step = 1))
   })
   modalDialog(
     title = div(div(paste("Yearly transitions on", tolower(drug))),
-                div(class = "modal-sub", "Probabilities for a person in the residual phase on this drug; each column must add up to 1")),
+                div(class = "modal-sub", "Probabilities for a person in the residual phase on this drug; the base case must add up to 1")),
     div(class = "tp-grid",
         div(class = "tp-head", "Each year, the person"), div(class = "tp-head", "Base case"),
-        div(class = "tp-head", "Low set"), div(class = "tp-head", "High set"),
         div(class = "tp-head", "Count (Dirichlet)"),
         cells,
-        div(class = "tp-head", "Total"), uiOutput("tp_sum_base"), uiOutput("tp_sum_low"), uiOutput("tp_sum_high"), div()),
+        div(class = "tp-head", "Total"), uiOutput("tp_sum_base"), div()),
     p(class = "small-print", style = "margin-top: 0.8rem;",
-      "The one-way analysis uses the low and high sets together. The probabilistic analysis draws the five probabilities ",
-      "together from a Dirichlet distribution with these counts, the number of patients in each outcome in the source trials. ",
+      "The counts are the number of patients in each outcome in the source trials. The probabilistic analysis draws the five ",
+      "probabilities together from a Dirichlet distribution with these counts. The one-way analysis moves each probability ",
+      "between the 2.5% and 97.5% points of its own distribution from these counts, and rescales the other four. ",
       actionLink("tp_from_counts", "Set the base case from the counts.")),
     uiOutput("tp_feedback"),
     footer = tagList(
@@ -72,13 +70,10 @@ tp_modal <- function(drug, rows, edited) {
 
 check_tp <- function(v) {
   e <- character(0)
-  if (anyNA(v$base) || anyNA(v$low) || anyNA(v$high) || anyNA(v$alpha)) return("Fill in every cell.")
-  for (nm in c("base", "low", "high")) {
-    lab <- c(base = "base-case", low = "low", high = "high")[[nm]]
-    if (any(v[[nm]] < 0 | v[[nm]] > 1)) e <- c(e, sprintf("The %s probabilities must lie between 0 and 1.", lab))
-    s <- sum(v[[nm]])
-    if (abs(s - 1) > 0.001) e <- c(e, sprintf("The %s probabilities add up to %s; they must add up to 1.", lab, formatC(s, format = "f", digits = 4)))
-  }
+  if (anyNA(v$base) || anyNA(v$alpha)) return("Fill in every cell.")
+  if (any(v$base < 0 | v$base > 1)) e <- c(e, "The base-case probabilities must lie between 0 and 1.")
+  s <- sum(v$base)
+  if (abs(s - 1) > 0.001) e <- c(e, sprintf("The base-case probabilities add up to %s; they must add up to 1.", formatC(s, format = "f", digits = 4)))
   if (any(v$alpha <= 0)) e <- c(e, "Every count must be above zero.")
   e
 }
