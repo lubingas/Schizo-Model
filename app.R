@@ -13,6 +13,7 @@ library(writexl)
 source("app/helpers.R", local = TRUE)
 source("app/charts.R", local = TRUE)
 source("app/editors.R", local = TRUE)
+source("app/equations.R", local = TRUE)
 
 published <- read_inputs("data/data_input.xlsx")
 published_wtp <- 1641    # 3 x Uganda's 2012 GDP per capita (US$547)
@@ -224,6 +225,10 @@ about_panel <- nav_panel(
             "Each year people stay in their state (the loops) or move along one arrow. Everyone starts in the residual phase on their ",
             "first-line drug. The Overview tab shows how many years people spend in each state."))),
   card(class = "mt-4",
+       card_header(h2("How costs are calculated"),
+                   p(class = "card-sub", "The cost of a year in each state; the model's cost functions follow these equations term by term")),
+       card_body(class = "equations", cost_equations())),
+  card(class = "mt-4",
        card_header(h2("How this version differs from the published model"),
                    p(class = "card-sub", "The published results came from the Excel model. This app runs an R version with these corrections.")),
        card_body(tags$table(class = "diff-table",
@@ -250,6 +255,14 @@ about_panel <- nav_panel(
            tags$tr(tags$td(tags$strong("Benzhexol for outpatients")),
                    tags$td("Outpatients with extrapyramidal symptoms were costed for a 60-day inpatient supply"),
                    tags$td("Costed for the duration of the symptoms (0.25 years)"), tags$td(class = "num", "+$0.4 to +$0.5")),
+           tags$tr(tags$td(tags$strong("Staff time")),
+                   tags$td("Ward rounds are counted per week, but only the psychiatrist's round was divided by 7 for a daily cost, and the daily drug round was added in hours rather than dollars. Outpatient consultations costed the clinical officer and nurse for a full hour"),
+                   tags$td("Every weekly round is divided by 7, the drug round is costed at the nurse's pay, and the consultation length applies to everyone at it. Staff time per hospital stay falls from $123.25 to $30.63"),
+                   tags$td(class = "num", "−$257 to −$292")),
+           tags$tr(tags$td(tags$strong("Probability of cost-effectiveness")),
+                   tags$td("Net benefit counted each DALY as a gain, so the acceptability curves favoured drugs with more DALYs"),
+                   tags$td("DALYs count as a loss: net benefit is minus the threshold times DALYs, minus cost"),
+                   tags$td(class = "num", "None; changes the acceptability curves")),
            tags$tr(tags$td(tags$strong("Background mortality")),
                    tags$td("The WHO life table's probabilities of dying within each 5-year age group were used as yearly probabilities, so people died about five times too fast: life expectancy from age 25 was 16.7 years, against 39 in the same table"),
                    tags$td("Converted to yearly probabilities. Life expectancy from age 25 is 33.3 years, including the extra mortality from schizophrenia"),

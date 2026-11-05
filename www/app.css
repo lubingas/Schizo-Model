@@ -221,6 +221,9 @@ a:hover { color: #104281; }
 .years-table td:first-child { white-space: nowrap; }
 .diff-table td.num, .diff-table th.num { text-align: right; white-space: nowrap; }
 .diff-table tr:last-child td { border-bottom: none; }
+/* cost equations: long equations scroll sideways on narrow screens */
+.equations h3 { font-size: 1rem; font-weight: 600; margin: 1.2rem 0 0.3rem; }
+.equations .eq { overflow-x: auto; overflow-y: hidden; padding: 0.15rem 0; }
 
 /* Footer */
 .app-footer { font-size: 0.84rem; color: var(--muted); padding: 1.5rem 24px 2rem; border-top: 1px solid var(--hairline); margin-top: 2rem; }

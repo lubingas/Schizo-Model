@@ -101,15 +101,16 @@ carer_indirect <- function(params) {
 # returns a named list: personnel, lab, capital, carer.travel, patient.travel, indirect, carer.indirect
 ip_costs <- function(params, cpi) {
   
-  # b) personnel: staff time on ward rounds (per week) and giving drugs (per day), over the length of stay
-  # (as in the Excel model, the 1/7 that turns weekly rounds into daily ones applies to the psychiatrist's major round only)
+  # b) personnel: staff time on ward rounds (per week, so divided by 7 for a day) and giving drugs (per day),
+  #    over the length of stay. Each term is rounds x staff x hours x hourly pay (salary / work hours in a year).
+  #    (The Excel model divided only the psychiatrist's major round by 7, and costed the drug round in hours, not US$)
   psy.major  <- params[["major_week"]]*params[["PSY_major"]]*(params[["duration_major"]]/60)*(params[["rate_psy"]]/params[["workhours_year"]])
   pco.major  <- params[["major_week"]]*params[["PCO_major"]]*(params[["duration_major"]]/60)*(params[["rate_pco"]]/params[["workhours_year"]])
   pno.major  <- params[["major_week"]]*params[["PNO_major"]]*(params[["duration_major"]]/60)*(params[["rate_pno"]]/params[["workhours_year"]])
   pco.minor  <- params[["minor_week"]]*params[["PCO_minor"]]*(params[["duration_minor"]]/60)*(params[["rate_pco"]]/params[["workhours_year"]])
   pno.minor  <- params[["minor_week"]]*params[["PNO_minor"]]*(params[["duration_minor"]]/60)*(params[["rate_pno"]]/params[["workhours_year"]])
-  drug.admin <- params[["PNO_drugadmin"]]*(params[["duration_drugadmin"]]/60)
-  personnel  <- (((1/7)*psy.major + pco.major + pno.major + pco.minor + pno.minor) + drug.admin)*params[["time"]]*params[["LOS"]]
+  drug.admin <- params[["PNO_drugadmin"]]*(params[["duration_drugadmin"]]/60)*(params[["rate_pno"]]/params[["workhours_year"]])
+  personnel  <- ((psy.major + pco.major + pno.major + pco.minor + pno.minor)/7 + drug.admin)*params[["time"]]*params[["LOS"]]
   
   # c) laboratory tests (2001 prices); TPHA or VDRL for syphilis
   tests <- params[["FBC_cost"]]*params[["FBC_freq"]] + params[["ESR_cost"]]*params[["ESR_freq"]] +
@@ -138,13 +139,14 @@ ip_costs <- function(params, cpi) {
 # returns a named list: personnel, lab, capital, carer.travel, patient.travel, indirect, carer.indirect
 op_costs <- function(params, cpi) {
   
-  # b) personnel: the consultation (psychiatrist or clinical officer, and a nurse) and dispensing, per visit
-  # (as in the Excel model, the consultation length multiplies the psychiatrist's time only)
+  # b) personnel: the consultation (psychiatrist or clinical officer, and a nurse) and dispensing, per visit.
+  #    Each term is staff x share of patients they see x hourly pay; the consultation length applies to all three
+  #    (the Excel model applied it to the psychiatrist only, costing the others for a full hour)
   psy        <- params[["PSY"]]*params[["PSY_prop"]]*(params[["rate_psy"]]/params[["workhours_year"]])
   pco        <- params[["PCO"]]*(1-params[["PSY_prop"]])*(params[["rate_pco"]]/params[["workhours_year"]])
   nurse      <- params[["nurse"]]*params[["nurse_prop"]]*(params[["rate_pno"]]/params[["workhours_year"]])
   pharmacist <- params[["pharm"]]*(params[["duration_drugdisp"]]/60)*(params[["rate_pharm"]]/params[["workhours_year"]])
-  personnel  <- (((params[["duration_consult"]]/60)*psy + pco + nurse) + pharmacist)*params[["visitation_frequency"]]*params[["time"]]*12
+  personnel  <- ((params[["duration_consult"]]/60)*(psy + pco + nurse) + pharmacist)*params[["visitation_frequency"]]*params[["time"]]*12
   
   # c) laboratory tests (2001 prices)
   lab <- (cpi_ratio(cpi, 2001)*(params[["FBC_cost"]]*params[["FBC_freq"]] + params[["ESR_cost"]]*params[["ESR_freq"]]))*params[["time"]]*12
