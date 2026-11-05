@@ -234,14 +234,17 @@ RunModel <- function(inputs,
   
   outcomes <- sapply(traces, `[[`, "DALYS")
   costs <- sapply(traces, `[[`, "Costs")
-  
+
+  # costs and outcomes only, named by drug (all the one-way and probabilistic analyses need)
+  if(summary_only) return(list(costs = setNames(costs, inputs$interventions),
+                               outcomes = setNames(outcomes, inputs$interventions)))
+
   output_tab <- tibble(intervention = inputs$interventions,
                        costs = costs,
                        outcomes = outcomes)
-  
+
   # return things in output I need for other functions
-  if(summary_only) return(list(costs=costs, outcomes=outcomes)) else 
-    return(list(ce_result = output_tab, 
+  return(list(ce_result = output_tab,
               baseparms = baseparms, 
               basetransitions = basetransitions, 
               DALYs = DALYs,
@@ -396,12 +399,10 @@ owsa <- function(model,
   
   # 2) costs and outcomes of every drug from one run
   runLive <- function(live) {
-    res <- RunModel(model$inputs,
-                    baseparms = live[names(baseparms)],
-                    basetransitions = live[names(basetransitions)],
-                    DALYs = model$DALYs)
-    list(costs = setNames(res$ce_result$costs, res$ce_result$intervention),
-         outcomes = setNames(res$ce_result$outcomes, res$ce_result$intervention))
+    RunModel(model$inputs,
+             baseparms = live[names(baseparms)],
+             basetransitions = live[names(basetransitions)],
+             DALYs = model$DALYs, summary_only = TRUE)
   }
   
   # 3) run each task: a fresh copy of the base case for its low run and for its high run
@@ -605,17 +606,13 @@ genPSA <- function(model, psalist) {
   basenames <- names(model$baseparms)
   transitnames <- names(model$basetransitions)
   
+  # costs and outcomes of every drug, named by drug
   res <- RunModel(model$inputs,
                   baseparms = psalist[basenames],
                   basetransitions = psalist[transitnames],
-                  DALYs = model$DALYs)
-  
-  costs <- setNames(res$ce_result[["costs"]], res$ce_result[["intervention"]])
-  outcomes <- setNames(res$ce_result[["outcomes"]], res$ce_result[["intervention"]])
-  
-  #rm(res); gc()
-  
-  return(list(costs = costs, outcomes = outcomes))
+                  DALYs = model$DALYs, summary_only = TRUE)
+
+  return(list(costs = res$costs, outcomes = res$outcomes))
   
 }
 
