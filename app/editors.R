@@ -49,9 +49,9 @@ tp_modal <- function(drug, rows, edited) {
   })
   modalDialog(
     title = div(div(paste("Yearly transitions on", tolower(drug))),
-                div(class = "modal-sub", "Probabilities for a person in the residual phase on this drug; the base case must add up to 1")),
+                div(class = "modal-sub", "Probabilities for a patient in the residual phase on this drug; the base case must add up to 1")),
     div(class = "tp-grid",
-        div(class = "tp-head", "Each year, the person"), div(class = "tp-head", "Base case"),
+        div(class = "tp-head", "Each year, the patient"), div(class = "tp-head", "Base case"),
         div(class = "tp-head", "Count (Dirichlet)"),
         cells,
         div(class = "tp-head", "Total"), uiOutput("tp_sum_base"), div()),

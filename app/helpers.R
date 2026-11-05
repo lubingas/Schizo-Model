@@ -19,7 +19,7 @@ drug_code  <- c(Chlorpromazine = "CPZ", Haloperidol = "HAL", Quetiapine = "QUE",
 second_line <- c(Chlorpromazine = "Risperidone", Haloperidol = "Risperidone",
                  Quetiapine = "Haloperidol", Risperidone = "Haloperidol",
                  Olanzapine = "Haloperidol")
-third_line_col <- "#7d8a90"   # fluphenazine decanoate, the third-line drug for everyone
+third_line_col <- "#7d8a90"   # fluphenazine decanoate, the third-line drug for every patient
 
 ui_ink <- list(primary = "#1b2a33", secondary = "#4e5b63", muted = "#6f7a7f",
                grid = "#e3e7e3", axis = "#c5ccc8", surface = "#fcfcfb")
@@ -225,9 +225,9 @@ state_names <- c("Residual phase, on first-line drug", "Residual phase, on secon
                  "Residual phase, on third-line drug", "Stopped first-line drug", "Stopped second-line drug",
                  "Relapse after stopping first-line drug", "Relapse after stopping second-line drug",
                  "Relapse on first-line drug", "Relapse on second-line drug")
-years_in_states <- function(trace) colSums(trace)[1:9]   # undiscounted, per person
+years_in_states <- function(trace) colSums(trace)[1:9]   # undiscounted, per patient
 
-# The state-transition diagram, with the years a person spends in each state
+# The state-transition diagram, with the years a patient spends in each state
 state_diagram <- function(years, first) {
   second <- second_line[[first]]
   c1 <- drug_cols[[first]]; c2 <- drug_cols[[second]]; c3 <- third_line_col
@@ -268,7 +268,7 @@ state_diagram <- function(years, first) {
 
   svg <- paste0(
     '<svg viewBox="0 0 1000 480" role="img" aria-labelledby="d-title" xmlns="http://www.w3.org/2000/svg">',
-    sprintf('<title id="d-title">Health states for people who start on %s: years spent in each state</title>', esc(tolower(first))),
+    sprintf('<title id="d-title">Health states for patients who start on %s: years spent in each state</title>', esc(tolower(first))),
     '<defs><marker id="d-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">',
     '<path d="M0,0 L10,5 L0,10 z" fill="#6f7a7f"/></marker>',
     '<style>.d-label{font:400 13px "Atkinson Hyperlegible Next",system-ui,sans-serif;fill:#4e5b63}',

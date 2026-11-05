@@ -112,11 +112,12 @@ ip_costs <- function(params, cpi) {
   drug.admin <- params[["PNO_drugadmin"]]*(params[["duration_drugadmin"]]/60)*(params[["rate_pno"]]/params[["workhours_year"]])
   personnel  <- ((psy.major + pco.major + pno.major + pco.minor + pno.minor)/7 + drug.admin)*params[["time"]]*params[["LOS"]]
   
-  # c) laboratory tests (2001 prices); TPHA or VDRL for syphilis
+  # c) laboratory tests (2001 prices), done once per hospital stay: blood counts, syphilis (TPHA or VDRL) and HIV
+  #    (the Excel model costed them 12 times a cycle, as if monthly for a year)
   tests <- params[["FBC_cost"]]*params[["FBC_freq"]] + params[["ESR_cost"]]*params[["ESR_freq"]] +
     params[["TPHA_cost"]]*params[["TPHA_freq"]]*params[["TPHA_proportion"]] +
     params[["VDRL_cost"]]*params[["VDRL_freq"]]*(1-params[["TPHA_proportion"]]) + params[["HIV_cost"]]*params[["HIV_freq"]]
-  lab <- cpi_ratio(cpi, 2001)*tests*params[["time"]]*12
+  lab <- cpi_ratio(cpi, 2001)*tests
   
   # d) capital and overheads, per day in hospital
   capital <- params[["capital_costs_per_inpatient_per_day"]]*params[["time"]]*params[["LOS"]]
@@ -148,8 +149,9 @@ op_costs <- function(params, cpi) {
   pharmacist <- params[["pharm"]]*(params[["duration_drugdisp"]]/60)*(params[["rate_pharm"]]/params[["workhours_year"]])
   personnel  <- ((params[["duration_consult"]]/60)*(psy + pco + nurse) + pharmacist)*params[["visitation_frequency"]]*params[["time"]]*12
   
-  # c) laboratory tests (2001 prices)
-  lab <- (cpi_ratio(cpi, 2001)*(params[["FBC_cost"]]*params[["FBC_freq"]] + params[["ESR_cost"]]*params[["ESR_freq"]]))*params[["time"]]*12
+  # c) laboratory tests (2001 prices): blood counts once a cycle
+  #    (the Excel model costed them 12 times a cycle, as if monthly)
+  lab <- cpi_ratio(cpi, 2001)*(params[["FBC_cost"]]*params[["FBC_freq"]] + params[["ESR_cost"]]*params[["ESR_freq"]])
   
   # d) capital and overheads, per visit
   capital <- params[["capital_costs_per_outpatient_visit"]]*params[["visitation_frequency"]]*params[["time"]]*12
